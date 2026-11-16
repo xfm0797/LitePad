@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows amd64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: go.sum
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend assets for go:embed
+        working-directory: frontend
+        run: pnpm run build
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Generate Windows icon and manifest resource
+        run: go run github.com/akavel/rsrc@v0.10.2 -ico build/app.ico -manifest build/app.manifest -o rsrc_windows_amd64.syso
+
+      - name: Build LitePad.exe
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: go build -tags desktop,production -trimpath -ldflags "-s -w -H windowsgui" -o LitePad.exe .
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: LitePad ${{ github.ref_name }}
+          generate_notes: true
+          files: LitePad.exe
