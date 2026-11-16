@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LitePad</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="menubar">
+        <span class="menu-item" data-menu="file">文件</span>
+        <span class="menu-item" data-menu="edit">编辑</span>
+        <span class="menu-item" data-menu="search">搜索</span>
+        <span class="menu-item" data-menu="view">视图</span>
+        <span class="menu-item" data-menu="tools">工具</span>
+        <span class="menu-item" data-menu="settings">设置</span>
+        <div class="menu-dropdown" id="dropdown"></div>
+      </div>
+      <div id="tabs"></div>
+      <div id="main-row">
+        <div id="editor-host"></div>
+        <div id="preview-pane" class="hidden"></div>
+      </div>
+      <div id="find-panel" class="hidden">
+        <div class="find-row">
+          <input id="find-input" type="text" placeholder="查找（支持正则）" />
+          <button id="toggle-case" title="区分大小写">Aa</button>
+          <button id="toggle-word" title="整词匹配">W</button>
+          <button id="toggle-regex" title="正则模式">.*</button>
+          <button id="btn-find-prev" title="上一个">↑</button>
+          <button id="btn-find-next" title="下一个">↓</button>
+          <button id="btn-find-close" title="关闭">✕</button>
+        </div>
+        <div class="find-row">
+          <input id="replace-input" type="text" placeholder="替换为" />
+          <button id="btn-replace-one">替换</button>
+          <button id="btn-replace-all">全部替换</button>
+          <span id="find-count"></span>
+        </div>
+      </div>
+      <div id="statusbar">
+        <span id="st-pos">行 1, 列 1</span>
+        <span id="st-sel">选中 0</span>
+        <span id="st-chars">字符 0</span>
+        <span id="st-lines">行数 1</span>
+        <span class="spacer"></span>
+        <span id="st-zoom">100%</span>
+        <span id="st-lang">纯文本</span>
+        <span id="st-enc">UTF-8</span>
+        <span id="st-eol">LF</span>
+      </div>
+    </div>
+
+    <!-- 命令面板 / 快速打开 -->
+    <div id="palette" class="hidden">
+      <div id="palette-box">
+        <div id="palette-title">命令面板</div>
+        <input id="palette-input" type="text" placeholder="输入命令或文件名过滤…" />
+        <div id="palette-list"></div>
+      </div>
+    </div>
+
+    <!-- 右键上下文菜单 -->
+    <div id="ctxmenu" class="ctx-menu"></div>
+
+    <!-- 模态 -->
+    <div id="modal-mask" class="hidden">
+      <div id="modal">
+        <div id="modal-msg"></div>
+        <div id="modal-body"></div>
+        <div id="modal-btns"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

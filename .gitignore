@@ -1,0 +1,36 @@
+# 前端依赖
+frontend/node_modules/
+frontend/.pnpm-store/
+
+# 前端构建产物（main.go 通过 go:embed 嵌入，编译前必须先构建前端）
+frontend/dist/
+frontend/dev-dist/
+
+# 应用与构建产物
+/LitePad.exe
+*.exe
+*.dll
+*.syso
+/build/bin/
+/build/darwin/
+
+# Wails 自动生成的绑定代码
+wailsjs/
+
+# Go 测试与工具链输出
+*.test
+*.out
+coverage.*
+
+# 本地临时产物
+.screenshots/
+*.log
+*.tmp
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
