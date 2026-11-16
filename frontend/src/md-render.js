@@ -1,6 +1,7 @@
 // md-render.js：轻量 Markdown → HTML 渲染器（零依赖，GFM 常用语法，输出已转义防注入）。
 // 支持：表格（含对齐）、任务列表、删除线、自动链接、围栏代码块（语言标识）、
-// 标题锚点、引用、嵌套列表、GFM 软/硬换行。原始 HTML 一律转义，不执行。
+// 标题锚点、引用、嵌套列表、GFM 软/硬换行；mermaid 围栏输出占位容器交给 preview.js 渲染。
+// 原始 HTML 一律转义，不执行。
 
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -259,9 +260,21 @@ function renderBlocks(lines, state) {
         buf.push(lines[i]);
         i++;
       }
+      const src = buf.join("\n");
+      // mermaid 围栏输出占位容器，由 preview.js 异步替换为图表；
+      // 源码仍以转义文本保存，Mermaid 加载/渲染失败时可原样展示。
+      if (info.toLowerCase() === "mermaid") {
+        out.push(
+          `<div class="md-mermaid" data-mermaid-state="pending">` +
+            `<pre class="md-mermaid-src" data-lang="mermaid"><code class="language-mermaid">${escapeHtml(src)}</code></pre>` +
+            `<div class="md-mermaid-msg" hidden></div>` +
+            `</div>`,
+        );
+        continue;
+      }
       const cls = info ? ` class="language-${info}"` : "";
       const attr = info ? ` data-lang="${info}"` : "";
-      out.push(`<pre${attr}><code${cls}>${escapeHtml(buf.join("\n"))}</code></pre>`);
+      out.push(`<pre${attr}><code${cls}>${escapeHtml(src)}</code></pre>`);
       continue;
     }
 

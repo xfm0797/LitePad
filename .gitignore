@@ -22,10 +22,16 @@ wailsjs/
 *.out
 coverage.*
 
-# 本地临时产物
+# 本地临时产物（冒烟验证截图与脚本、依赖下载暂存目录）
 .screenshots/
+.verify/
+.tmp-mermaid*
+vendor-dl/
 *.log
 *.tmp
+
+# 包管理器本地缓存
+.pnpm-store/
 
 # 编辑器与系统文件
 .vscode/

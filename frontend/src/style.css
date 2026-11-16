@@ -151,6 +151,23 @@ body {
 #preview-pane tbody tr:nth-child(even) { background: color-mix(in srgb, var(--panel) 55%, transparent); }
 #preview-pane del { opacity: .65; }
 
+/* Mermaid 图表：SVG 配色由 preview.js 按亮/暗主题注入，这里只负责布局与错误提示 */
+#preview-pane .md-mermaid { margin: .9em 0; }
+#preview-pane .md-mermaid svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+#preview-pane .md-mermaid[data-mermaid-state="error"] .md-mermaid-src { border-color: var(--cur-match); }
+#preview-pane .md-mermaid-msg {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--cur-match);
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 /* 查找面板 */
 #find-panel {
   position: absolute;
