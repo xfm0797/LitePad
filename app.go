@@ -479,7 +479,9 @@ func (a *App) ApplyAssoc(formats []string, explorerMenu bool, setDefault bool) e
 	defer a.cfgMu.Unlock()
 	a.cfg.Integrations = core.IntegrationPrefs{Formats: clean, ExplorerMenu: explorerMenu, SetDefault: setDefault}
 	if a.store != nil {
-		_ = a.store.SaveConfig(a.cfg)
+		if err := a.store.SaveConfig(a.cfg); err != nil {
+			core.Warn("ApplyAssoc SaveConfig failed: %v", err)
+		}
 	}
 	return nil
 }
@@ -493,7 +495,9 @@ func (a *App) ClearAssoc() error {
 	defer a.cfgMu.Unlock()
 	a.cfg.Integrations = core.IntegrationPrefs{Formats: []string{}, ExplorerMenu: false, SetDefault: false}
 	if a.store != nil {
-		_ = a.store.SaveConfig(a.cfg)
+		if err := a.store.SaveConfig(a.cfg); err != nil {
+			core.Warn("ClearAssoc SaveConfig failed: %v", err)
+		}
 	}
 	return nil
 }
