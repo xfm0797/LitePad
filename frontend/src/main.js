@@ -44,6 +44,7 @@ let preview = null;  // Markdown 预览
 let outline = null;  // 大纲侧栏
 let fullscreen = false;
 let lastUnsaved = false; // 上次同步给 Go 侧的脏状态，避免每次按键都发 IPC
+const closedStack = []; // 最近关闭的非空标签路径，Ctrl+Shift+T 弹出
 
 const ENCODINGS = ["UTF-8", "UTF-8 BOM", "GBK", "ANSI (GB18030)", "UTF-16 LE", "UTF-16 BE"];
 const BASE_FONT_SIZE = 14;
@@ -204,6 +205,11 @@ async function closeTab(id, { ensureOne = true } = {}) {
   }
   const cur = activeTab();
   if (cur && cur.id === id && ed) cur.state = ed.view.state;
+  // 非空标签压入关闭栈，供 Ctrl+Shift+T 恢复（最多保留最近 10 条）
+  if (t.path) {
+    closedStack.push({ path: t.path, name: t.name });
+    if (closedStack.length > 10) closedStack.shift();
+  }
   tabs.splice(idx, 1);
   if (tabs.length === 0) {
     if (ensureOne) {
@@ -324,6 +330,13 @@ async function saveAllTabs() {
 
 async function cmdSaveAs() { const t = activeTab(); if (t) await saveTabAs(t); }
 async function cmdClose() { const t = activeTab(); if (t) await closeTab(t.id); }
+
+// 重新打开最近关闭的标签（Ctrl+Shift+T）。直接弹出栈顶，若文件仍存在则重新打开。
+async function reopenClosed() {
+  const entry = closedStack.pop();
+  if (!entry) { toast("没有可重新打开的标签"); return; }
+  await openByPath(entry.path);
+}
 
 // 退出程序：未保存确认沿用 Go 侧 OnBeforeClose 的统一逻辑
 async function cmdExit() {
@@ -654,6 +667,7 @@ const COMMANDS = [
   { id: "file.saveAll", label: "全部保存", shortcut: "Ctrl+Alt+S", keys: [{ key: "s", ctrl: true, alt: true }], run: saveAllTabs },
   { id: "file.close", label: "关闭标签", shortcut: "Ctrl+W", keys: [{ key: "w", ctrl: true }], run: cmdClose },
   { id: "file.closeAll", label: "关闭全部标签", run: closeAllTabs },
+  { id: "file.reopenClosed", label: "重新打开已关闭标签", shortcut: "Ctrl+Shift+T", keys: [{ key: "t", ctrl: true, shift: true }], run: reopenClosed },
   { id: "file.exit", label: "退出", palette: false, run: cmdExit },
 
   // 编辑
@@ -762,6 +776,7 @@ const MENUS = {
       { sep: true },
       menuItem("file.close"),
       menuItem("file.closeAll"),
+      menuItem("file.reopenClosed"),
       ...(recents.length ? [{ sep: true }, ...recents] : []),
       { sep: true },
       menuItem("file.exit"),

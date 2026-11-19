@@ -19,6 +19,16 @@ type Config struct {
 	RecentFiles  []string         `json:"recentFiles"`    // 最近文件（最新在前，去重，最多 10 条）
 	ContextMenu  ContextMenuPrefs `json:"contextMenu"`    // 右键菜单显示哪些分组
 	Integrations IntegrationPrefs `json:"integrations"`   // 系统集成（文件关联 / 资源管理器菜单）
+	Geometry     WindowGeometry   `json:"geometry,omitempty"`
+}
+
+// WindowGeometry 记录上次关闭时的窗口位置与尺寸，下次启动时尽量还原。
+type WindowGeometry struct {
+	X       int  `json:"x"`       // 左上角 X
+	Y       int  `json:"y"`       // 左上角 Y
+	Width   int  `json:"width"`   // 宽（px）
+	Height  int  `json:"height"`  // 高（px）
+	Visible bool `json:"visible"` // true 表示该几何有效，false 时应忽略（例如用户是在另一显示器上关的）
 }
 
 // ContextMenuPrefs 控制编辑器右键菜单的分组显示。

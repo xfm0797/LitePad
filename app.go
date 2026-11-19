@@ -81,11 +81,26 @@ func startupFiles() []string {
 // startup 由 Wails 生命周期回调调用。
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// 窗口创建时按工作区居中，随后再显示（main.go 中 StartHidden=true）。
-	winW, winH := initialWindowSize()
-	winX, winY := centerInWorkArea(winW, winH)
-	runtime.WindowSetPosition(ctx, winX, winY)
-	defer runtime.WindowShow(ctx)
+	// 窗口位置优先从配置恢复（需在当前屏幕工作区内，避免另一显示器上保存后打开到屏外）。
+	// 没有可用几何时用工作区居中作为默认值。
+	cfg, err := a.store.LoadConfig()
+	if err == nil && cfg.Geometry.Visible && cfg.Geometry.Width >= minWindowWidth && cfg.Geometry.Height >= minWindowHeight {
+		if geometryFitsWorkArea(cfg.Geometry.X, cfg.Geometry.Y, cfg.Geometry.Width, cfg.Geometry.Height) {
+			runtime.WindowSetSize(ctx, cfg.Geometry.Width, cfg.Geometry.Height)
+			runtime.WindowSetPosition(ctx, cfg.Geometry.X, cfg.Geometry.Y)
+			defer runtime.WindowShow(ctx)
+		} else {
+			winW, winH := initialWindowSize()
+			winX, winY := centerInWorkArea(winW, winH)
+			runtime.WindowSetPosition(ctx, winX, winY)
+			defer runtime.WindowShow(ctx)
+		}
+	} else {
+		winW, winH := initialWindowSize()
+		winX, winY := centerInWorkArea(winW, winH)
+		runtime.WindowSetPosition(ctx, winX, winY)
+		defer runtime.WindowShow(ctx)
+	}
 	// 注册文件拖放：拖入文件后向前端广播事件
 	runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
 		runtime.EventsEmit(ctx, "files:dropped", paths)
@@ -127,14 +142,35 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
-// beforeClose 在窗口关闭前拦截：有未保存内容时通知前端确认。
+// beforeClose 在窗口关闭前拦截：保存窗口几何 + 有未保存内容时通知前端确认。
 // Wails v2 约定返回 true 表示阻止本次关闭。
 func (a *App) beforeClose(ctx context.Context) bool {
+	// 先保存 geometry（即使后面被阻止也没害处，除非用户确认不退出）
+	a.saveGeometry()
 	if a.unsaved.Load() {
 		runtime.EventsEmit(ctx, "app:confirm-exit")
 		return true
 	}
 	return false
+}
+
+// saveGeometry 在窗口关闭前把位置/尺寸写进配置。
+func (a *App) saveGeometry() {
+	if a.ctx == nil || a.store == nil {
+		return
+	}
+	w, h := runtime.WindowGetSize(a.ctx)
+	x, y := runtime.WindowGetPosition(a.ctx)
+	if w < minWindowWidth || h < minWindowHeight {
+		return
+	}
+	a.cfgMu.Lock()
+	a.cfg.Geometry = core.WindowGeometry{X: x, Y: y, Width: w, Height: h, Visible: geometryFitsWorkArea(x, y, w, h)}
+	cfg := a.cfg
+	a.cfgMu.Unlock()
+	if err := a.store.SaveConfig(cfg); err != nil {
+		// 窗口即将关闭，不需要再提示用户
+	}
 }
 
 // SyncWatchers 将监视列表与当前打开的文件对齐（前端在标签变化时调用）。
