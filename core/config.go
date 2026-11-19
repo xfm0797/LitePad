@@ -20,6 +20,7 @@ type Config struct {
 	ContextMenu  ContextMenuPrefs `json:"contextMenu"`    // 右键菜单显示哪些分组
 	Integrations IntegrationPrefs `json:"integrations"`   // 系统集成（文件关联 / 资源管理器菜单）
 	Geometry     WindowGeometry   `json:"geometry,omitempty"`
+	Bookmarks    map[string][]int `json:"bookmarks,omitempty"` // 路径 → 书签行号列表（行号从 1 起）
 }
 
 // WindowGeometry 记录上次关闭时的窗口位置与尺寸，下次启动时尽量还原。
@@ -107,6 +108,7 @@ func DefaultConfig() Config {
 		RecentFiles:  []string{},
 		ContextMenu:  DefaultContextMenu(),
 		Integrations: IntegrationPrefs{Formats: []string{}},
+		Bookmarks:    map[string][]int{},
 	}
 }
 
@@ -131,6 +133,9 @@ func (c *Config) Normalize() {
 	}
 	if c.Integrations.Formats == nil {
 		c.Integrations.Formats = []string{}
+	}
+	if c.Bookmarks == nil {
+		c.Bookmarks = map[string][]int{}
 	}
 }
 

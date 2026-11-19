@@ -21,7 +21,7 @@ import {
   trimTrailingSpaces, tabToSpaces, spacesToTab, insertDateTime,
   addCursorVertical, collapseCursors,
 } from "./commands.js";
-import { toggleBookmark, gotoBookmark, clearAllBookmarks } from "./bookmarks.js";
+import { toggleBookmark, gotoBookmark, clearAllBookmarks, getBookmarkLineNumbers, restoreBookmarks } from "./bookmarks.js";
 import { editorMenuItems, normalizeContextMenu } from "./ctxmenu.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -175,6 +175,10 @@ function openTab(payload, { activate = true, fromSession = false } = {}) {
     activeId = t.id;
     t.state = state;
     ed.view.setState(state);
+    // 从配置恢复该文件的书签（首次打开时注入）
+    if (payload.path && cfg.bookmarks?.[payload.path]) {
+      restoreBookmarks(ed.view, cfg.bookmarks[payload.path]);
+    }
     updateStatus();
   } else {
     t.state = state;
@@ -658,6 +662,21 @@ function showTabContextMenu(x, y, t) {
 // ---------- 命令注册表 ----------
 // 菜单、命令面板与快捷键共用这一份数据：新增命令只改这里，
 // 避免此前三处重复导致的标签/快捷键漂移。keys 中的省略字段表示必须为 false。
+
+// persistBookmarksFor 把当前活动标签的书签同步到 cfg.bookmarks 并写盘。
+// 未命名标签（path 为空）不持久化。
+function persistBookmarksFor(view, path) {
+  if (!view || !path) return;
+  if (!cfg.bookmarks) cfg.bookmarks = {};
+  const lines = getBookmarkLineNumbers(view);
+  if (lines.length === 0) {
+    delete cfg.bookmarks[path];
+  } else {
+    cfg.bookmarks[path] = lines;
+  }
+  saveConfigSoon();
+}
+
 const COMMANDS = [
   // 文件
   { id: "file.new", label: "新建", shortcut: "Ctrl+N", keys: [{ key: "n", ctrl: true }], run: cmdNew },
@@ -707,10 +726,10 @@ const COMMANDS = [
   { id: "view.zoomIn", label: "放大字体", shortcut: "Ctrl+=", keys: [{ key: "=", ctrl: true }, { key: "+", ctrl: true }], run: () => zoom(1) },
   { id: "view.zoomOut", label: "缩小字体", shortcut: "Ctrl+-", keys: [{ key: "-", ctrl: true }], run: () => zoom(-1) },
   { id: "view.zoomReset", label: "重置字体", shortcut: "Ctrl+0", keys: [{ key: "0", ctrl: true }], run: zoomReset },
-  { id: "view.bookmarkToggle", label: "添加/移除书签", shortcut: "Ctrl+F2", keys: [{ key: "f2", ctrl: true }], run: () => toggleBookmark(ed.view) },
+  { id: "view.bookmarkToggle", label: "添加/移除书签", shortcut: "Ctrl+F2", keys: [{ key: "f2", ctrl: true }], run: () => { toggleBookmark(ed.view); persistBookmarksFor(ed.view, activeTab()?.path); } },
   { id: "view.bookmarkPrev", label: "上一个书签", shortcut: "Shift+F2", keys: [{ key: "f2", shift: true }], run: () => gotoBookmark(ed.view, false) },
   { id: "view.bookmarkNext", label: "下一个书签", shortcut: "F2", keys: [{ key: "f2" }], run: () => gotoBookmark(ed.view, true) },
-  { id: "view.bookmarkClear", label: "清除全部书签", run: () => clearAllBookmarks(ed.view) },
+  { id: "view.bookmarkClear", label: "清除全部书签", run: () => { clearAllBookmarks(ed.view); persistBookmarksFor(ed.view, activeTab()?.path); } },
   { id: "view.language", label: "切换语法高亮…", run: switchLanguage },
   { id: "view.zen", label: "禅模式（隐藏界面装饰）", shortcut: "F10", keys: [{ key: "f10" }], run: toggleZen },
   { id: "view.fullscreen", label: "全屏", shortcut: "F11", keys: [{ key: "f11" }], run: toggleFullscreen },

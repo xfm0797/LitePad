@@ -4,6 +4,7 @@ import { gutter, GutterMarker } from "@codemirror/view";
 
 const toggleBookmarkEf = StateEffect.define(); // number[]（书签行起始位置，切换状态）
 const clearBookmarksEf = StateEffect.define();
+const setBookmarksEf = StateEffect.define(); // Set<number>（直接设置书签集合，用于会话恢复）
 
 // 书签集合：存储各书签行的行首位置，文档编辑时自动映射。
 export const bookmarkField = StateField.define({
@@ -18,6 +19,8 @@ export const bookmarkField = StateField.define({
         }
       } else if (e.is(clearBookmarksEf)) {
         next = new Set();
+      } else if (e.is(setBookmarksEf)) {
+        next = new Set(e.value);
       }
     }
     if (tr.docChanged || next !== set) {
@@ -53,7 +56,7 @@ export function bookmarkGutter() {
       lineMarkerChange: (update) =>
         update.docChanged ||
         update.transactions.some((tr) =>
-          tr.effects.some((e) => e.is(toggleBookmarkEf) || e.is(clearBookmarksEf))),
+          tr.effects.some((e) => e.is(toggleBookmarkEf) || e.is(clearBookmarksEf) || e.is(setBookmarksEf))),
       lineMarker(view, line) {
         const set = view.state.field(bookmarkField, false);
         return set && set.has(line.from) ? BOOKMARK : null;
@@ -105,4 +108,34 @@ export function clearAllBookmarks(view) {
 
 export function bookmarkCount(view) {
   return view.state.field(bookmarkField, false)?.size || 0;
+}
+
+// getBookmarkLineNumbers 把当前书签集合转成行号数组（行号从 1 起，便于跨会话持久化）。
+// 位置在文档编辑后会变，但行号仍能恢复到大致正确的位置。
+export function getBookmarkLineNumbers(view) {
+  const set = view.state.field(bookmarkField, false);
+  if (!set || set.size === 0) return [];
+  const doc = view.state.doc;
+  const lines = [];
+  for (const pos of set) {
+    const line = doc.lineAt(pos);
+    lines.push(line.number);
+  }
+  lines.sort((a, b) => a - b);
+  return lines;
+}
+
+// restoreBookmarks 从持久化的行号数组恢复书签集合（打开文件时调用）。
+// 行号已越界或文件行数不足的条目会被自动跳过。
+export function restoreBookmarks(view, lineNumbers) {
+  if (!lineNumbers || lineNumbers.length === 0) return;
+  const doc = view.state.doc;
+  const positions = new Set();
+  for (const n of lineNumbers) {
+    if (typeof n !== "number" || n < 1 || n > doc.lines) continue;
+    positions.add(doc.line(n).from);
+  }
+  if (positions.size > 0) {
+    view.dispatch({ effects: setBookmarksEf.of(positions) });
+  }
 }
