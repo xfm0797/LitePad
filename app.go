@@ -50,11 +50,19 @@ func NewApp() *App {
 	a := &App{}
 	a.store, _ = core.NewConfigStore()
 	if a.store != nil {
-		a.cfg, _ = a.store.LoadConfig()
+		cfg, err := a.store.LoadConfig()
+		if err != nil {
+			core.Warn("failed to load config: %v, using defaults", err)
+			a.cfg = core.DefaultConfig()
+		} else {
+			a.cfg = cfg
+		}
 	} else {
 		a.cfg = core.DefaultConfig()
+		core.Warn("ConfigStore unavailable, using defaults")
 	}
 	a.pendingFiles = startupFiles()
+	core.Info("NewApp ready, pendingFiles=%d", len(a.pendingFiles))
 	return a
 }
 
@@ -81,6 +89,7 @@ func startupFiles() []string {
 // startup 由 Wails 生命周期回调调用。
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	core.Info("App.startup begin")
 	// 窗口位置优先从配置恢复（需在当前屏幕工作区内，避免另一显示器上保存后打开到屏外）。
 	// 没有可用几何时用工作区居中作为默认值。
 	cfg, err := a.store.LoadConfig()
@@ -88,17 +97,20 @@ func (a *App) startup(ctx context.Context) {
 		if geometryFitsWorkArea(cfg.Geometry.X, cfg.Geometry.Y, cfg.Geometry.Width, cfg.Geometry.Height) {
 			runtime.WindowSetSize(ctx, cfg.Geometry.Width, cfg.Geometry.Height)
 			runtime.WindowSetPosition(ctx, cfg.Geometry.X, cfg.Geometry.Y)
+			core.Info("restored window geometry: %dx%d @ (%d,%d)", cfg.Geometry.Width, cfg.Geometry.Height, cfg.Geometry.X, cfg.Geometry.Y)
 			defer runtime.WindowShow(ctx)
 		} else {
 			winW, winH := initialWindowSize()
 			winX, winY := centerInWorkArea(winW, winH)
 			runtime.WindowSetPosition(ctx, winX, winY)
+			core.Info("saved geometry out of work area, fallback to centered")
 			defer runtime.WindowShow(ctx)
 		}
 	} else {
 		winW, winH := initialWindowSize()
 		winX, winY := centerInWorkArea(winW, winH)
 		runtime.WindowSetPosition(ctx, winX, winY)
+		core.Info("no saved geometry, centered")
 		defer runtime.WindowShow(ctx)
 	}
 	// 注册文件拖放：拖入文件后向前端广播事件
@@ -109,6 +121,9 @@ func (a *App) startup(ctx context.Context) {
 	a.watcher = core.NewWatcher()
 	if a.watcher != nil {
 		go a.watchLoop()
+		core.Info("file watcher started")
+	} else {
+		core.Warn("file watcher unavailable")
 	}
 	// 单实例：第二个进程转发的文件并入启动文件队列，由前端统一取出打开。
 	a.single.setHandler(func(paths []string) {
@@ -117,10 +132,12 @@ func (a *App) startup(ctx context.Context) {
 			a.pendingFiles = append(a.pendingFiles, paths...)
 			a.filesMu.Unlock()
 		}
+		core.Info("single-instance callback triggered, paths=%v", paths)
 		runtime.WindowShow(ctx)
 		runtime.WindowUnminimise(ctx)
 		runtime.EventsEmit(ctx, "app:open-paths", nil)
 	})
+	core.Info("App.startup done")
 }
 
 // watchLoop 将外部文件变更转发给前端，监视器关闭后退出（不泄漏协程）。
@@ -137,20 +154,23 @@ func (a *App) watchLoop() {
 
 // shutdown 在应用退出时释放资源。
 func (a *App) shutdown(ctx context.Context) {
+	core.Info("App.shutdown begin")
 	if a.watcher != nil {
 		a.watcher.Close()
 	}
+	core.Info("App.shutdown done")
 }
 
 // beforeClose 在窗口关闭前拦截：保存窗口几何 + 有未保存内容时通知前端确认。
 // Wails v2 约定返回 true 表示阻止本次关闭。
 func (a *App) beforeClose(ctx context.Context) bool {
-	// 先保存 geometry（即使后面被阻止也没害处，除非用户确认不退出）
 	a.saveGeometry()
 	if a.unsaved.Load() {
+		core.Info("beforeClose blocked: unsaved tabs, waiting for confirm-exit")
 		runtime.EventsEmit(ctx, "app:confirm-exit")
 		return true
 	}
+	core.Info("beforeClose: closing cleanly")
 	return false
 }
 
@@ -164,12 +184,15 @@ func (a *App) saveGeometry() {
 	if w < minWindowWidth || h < minWindowHeight {
 		return
 	}
+	visible := geometryFitsWorkArea(x, y, w, h)
 	a.cfgMu.Lock()
-	a.cfg.Geometry = core.WindowGeometry{X: x, Y: y, Width: w, Height: h, Visible: geometryFitsWorkArea(x, y, w, h)}
+	a.cfg.Geometry = core.WindowGeometry{X: x, Y: y, Width: w, Height: h, Visible: visible}
 	cfg := a.cfg
 	a.cfgMu.Unlock()
 	if err := a.store.SaveConfig(cfg); err != nil {
-		// 窗口即将关闭，不需要再提示用户
+		core.Warn("saveGeometry failed: %v", err)
+	} else {
+		core.Info("saveGeometry: %dx%d @ (%d,%d) visible=%v", w, h, x, y, visible)
 	}
 }
 
@@ -280,6 +303,7 @@ func (a *App) OpenFileDialog() (*FilePayload, error) {
 func (a *App) OpenPath(path string) (*FilePayload, error) {
 	content, enc, eol, err := core.ReadTextFile(path)
 	if err != nil {
+		core.Warn("OpenPath failed: %s: %v", path, err)
 		return nil, err
 	}
 	// 用磁盘字节数而非字符数：中文文件按字符计会显著低估，影响大文件降级判断
@@ -287,6 +311,7 @@ func (a *App) OpenPath(path string) (*FilePayload, error) {
 	if st, statErr := os.Stat(path); statErr == nil {
 		size = st.Size()
 	}
+	core.Info("OpenPath ok: %s size=%d enc=%s eol=%s", filepath.Base(path), size, enc, eol)
 	return &FilePayload{
 		Path:     path,
 		Name:     filepath.Base(path),
@@ -315,7 +340,13 @@ func (a *App) SaveFileDialog(defaultName string) (string, error) {
 
 // WriteFile 以指定编码与换行符写盘（前端传 UTF-8 内容）。
 func (a *App) WriteFile(path string, content string, encoding string, eol string) error {
-	return core.WriteTextFile(path, content, encoding, eol)
+	err := core.WriteTextFile(path, content, encoding, eol)
+	if err != nil {
+		core.Warn("WriteFile failed: %s: %v", path, err)
+	} else {
+		core.Info("WriteFile ok: %s enc=%s eol=%s bytes=%d", filepath.Base(path), encoding, eol, len(content))
+	}
+	return err
 }
 
 // GetConfig 返回当前配置（副本，避免前端拿到内部状态引用）。
