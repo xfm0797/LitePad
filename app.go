@@ -39,9 +39,10 @@ type App struct {
 	cfgMu sync.RWMutex
 	cfg   core.Config
 
-	unsaved      atomic.Bool // 存在未保存标签时由前端置位，用于关闭拦截
-	filesMu      sync.Mutex  // 保护 pendingFiles
-	pendingFiles []string    // 启动参数中携带的文件（文件关联双击打开）
+	unsaved      atomic.Bool     // 存在未保存标签时由前端置位，用于关闭拦截
+	filesMu      sync.Mutex      // 保护 pendingFiles
+	pendingFiles []string        // 启动参数中携带的文件（文件关联双击打开）
+	single       *singleInstance // 单实例转发器，nil 表示未启用
 }
 
 // NewApp 构造 App 并加载持久化配置。
@@ -94,6 +95,17 @@ func (a *App) startup(ctx context.Context) {
 	if a.watcher != nil {
 		go a.watchLoop()
 	}
+	// 单实例：第二个进程转发的文件并入启动文件队列，由前端统一取出打开。
+	a.single.setHandler(func(paths []string) {
+		if len(paths) > 0 {
+			a.filesMu.Lock()
+			a.pendingFiles = append(a.pendingFiles, paths...)
+			a.filesMu.Unlock()
+		}
+		runtime.WindowShow(ctx)
+		runtime.WindowUnminimise(ctx)
+		runtime.EventsEmit(ctx, "app:open-paths", nil)
+	})
 }
 
 // watchLoop 将外部文件变更转发给前端，监视器关闭后退出（不泄漏协程）。
@@ -320,11 +332,13 @@ func (a *App) AddRecent(path string) (core.Config, error) {
 }
 
 // SaveSession 持久化当前会话（打开的文件与活动标签）。
-func (a *App) SaveSession(paths []string, active int) error {
+// activePath 记录活动标签对应的文件路径，空标签时为空串；
+// 相比下标，不会因空标签被过滤而产生错位。
+func (a *App) SaveSession(paths []string, activePath string) error {
 	if a.store == nil {
 		return nil
 	}
-	return a.store.SaveSession(core.Session{Paths: paths, Active: active})
+	return a.store.SaveSession(core.Session{Paths: paths, ActivePath: activePath})
 }
 
 // LoadSession 读取会话；无会话文件时返回空列表。
@@ -338,27 +352,26 @@ func (a *App) LoadSession() (core.Session, error) {
 // SetUnsaved 由前端同步「是否存在未保存标签」的状态。
 func (a *App) SetUnsaved(unsaved bool) { a.unsaved.Store(unsaved) }
 
+// FindInFiles 在指定目录下递归查找文本，返回命中的文件/行/列。
+// root 为文件时自动改为其所在目录；query 按纯文本处理（非正则）。
+func (a *App) FindInFiles(root, query string, opts core.SearchOptions) (core.SearchResultSet, error) {
+	return core.SearchInFiles(root, query, opts)
+}
+
 // Quit 强制退出应用（用于未保存确认后的继续退出）。
 func (a *App) Quit() { runtime.Quit(a.ctx) }
 
-// StartupFiles 返回启动命令行中携带的文件（双击关联文件打开）。
-// 前端在启动时取出后应立即调用 ClearStartupFiles，避免重复打开。
-func (a *App) StartupFiles() []string {
+// TakeStartupFiles 原子取出并清空一次性启动文件列表。
+// 前端启动与单实例转发可能并发触发，原子取出可避免同一文件被打开两次。
+func (a *App) TakeStartupFiles() []string {
 	a.filesMu.Lock()
 	defer a.filesMu.Unlock()
 	if len(a.pendingFiles) == 0 {
 		return []string{}
 	}
-	out := make([]string, len(a.pendingFiles))
-	copy(out, a.pendingFiles)
-	return out
-}
-
-// ClearStartupFiles 清空一次性启动文件列表。
-func (a *App) ClearStartupFiles() {
-	a.filesMu.Lock()
+	out := a.pendingFiles
 	a.pendingFiles = nil
-	a.filesMu.Unlock()
+	return out
 }
 
 // AssocFormats 返回设置页可勾选的关联格式清单。

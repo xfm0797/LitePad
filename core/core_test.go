@@ -163,7 +163,7 @@ func TestConfigLegacyCompat(t *testing.T) {
 // TestSessionRoundTrip 验证会话保存与读取。
 func TestSessionRoundTrip(t *testing.T) {
 	store := &ConfigStore{dir: t.TempDir()}
-	want := Session{Paths: []string{"a.txt", "b.go"}, Active: 1}
+	want := Session{Paths: []string{"a.txt", "b.go"}, ActivePath: "b.go"}
 	if err := store.SaveSession(want); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if len(got.Paths) != 2 || got.Active != 1 {
+	if len(got.Paths) != 2 || got.ActivePath != "b.go" {
 		t.Errorf("会话往返不一致：%+v", got)
 	}
 }

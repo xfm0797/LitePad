@@ -202,6 +202,60 @@ body {
 #find-panel button.on, #find-panel button:hover { background: var(--accent); color: var(--accent-fg); }
 #find-count { opacity: .7; font-size: 12px; min-width: 70px; }
 
+/* 在文件中查找：底部结果面板 */
+#search-results {
+  flex: 0 0 auto;
+  max-height: 38vh;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+#search-results.hidden { display: none; }
+.sr-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.sr-form input[type="text"] {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+#sr-query { width: 220px; }
+#sr-root { flex: 1; min-width: 160px; }
+.sr-opt { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; }
+.sr-form button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.sr-form button:hover { background: var(--accent); color: var(--accent-fg); }
+.sr-form button:disabled { opacity: .5; cursor: default; }
+#sr-summary { padding: 4px 12px; font-size: 12px; opacity: .7; }
+#sr-list { overflow: auto; flex: 1; }
+.sr-row {
+  display: flex;
+  gap: 10px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sr-row:hover { background: var(--accent); color: var(--accent-fg); }
+.sr-loc { flex: 0 0 auto; color: var(--accent); min-width: 160px; }
+.sr-row:hover .sr-loc { color: var(--accent-fg); }
+.sr-text { overflow: hidden; text-overflow: ellipsis; opacity: .85; }
+.sr-empty { padding: 10px 12px; opacity: .6; font-size: 12px; }
+
 /* 状态栏 */
 #statusbar {
   display: flex;

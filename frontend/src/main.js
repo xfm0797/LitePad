@@ -8,6 +8,7 @@ import {
   buildExtensions, langEffect, configEffects, applyConfigToState, langForPath, langLabel, languageOptions,
 } from "./editor.js";
 import { createFindPanel } from "./find.js";
+import { createSearchFiles } from "./searchfiles.js";
 import { createPalette } from "./palette.js";
 import { createPreview } from "./preview.js";
 import { createStatus } from "./status.js";
@@ -35,6 +36,7 @@ let tabs = [];       // {id, name, path, state, encoding, eol, language, rev, sa
 let activeId = null;
 let tabSeq = 0;
 let find = null;     // 查找替换面板
+let searchFiles = null; // 在文件中查找面板
 let palette = null;  // 命令面板
 let status = null;   // 状态栏
 let preview = null;  // Markdown 预览
@@ -636,65 +638,107 @@ function showTabContextMenu(x, y, t) {
   ]);
 }
 
-// ---------- 菜单 ----------
-function commandsList() {
-  return [
-    { label: "新建", shortcut: "Ctrl+N", run: cmdNew },
-    { label: "打开…", shortcut: "Ctrl+O", run: cmdOpen },
-    { label: "保存", shortcut: "Ctrl+S", run: cmdSave },
-    { label: "另存为…", shortcut: "Ctrl+Shift+S", run: cmdSaveAs },
-    { label: "全部保存", shortcut: "Ctrl+Alt+S", run: saveAllTabs },
-    { label: "关闭标签", shortcut: "Ctrl+W", run: cmdClose },
-    { label: "关闭全部标签", run: closeAllTabs },
-    { label: "查找…", shortcut: "Ctrl+F", run: () => find && find.show() },
-    { label: "替换…", shortcut: "Ctrl+H", run: () => { if (find) { find.show(); find.focusReplace(); } } },
-    { label: "转到行…", shortcut: "Ctrl+G", run: cmdGotoLine },
-    { label: "撤销", shortcut: "Ctrl+Z", run: () => undo(ed.view) },
-    { label: "重做", shortcut: "Ctrl+Y", run: () => redo(ed.view) },
-    { label: "复制并插入当前行", shortcut: "Ctrl+D", run: () => copyLineDown(ed.view) },
-    { label: "删除当前行", shortcut: "Ctrl+L", run: () => deleteLine(ed.view) },
-    { label: "当前行上移", shortcut: "Ctrl+Shift+↑", run: () => moveLineUp(ed.view) },
-    { label: "当前行下移", shortcut: "Ctrl+Shift+↓", run: () => moveLineDown(ed.view) },
-    { label: "添加/移除书签", shortcut: "Ctrl+F2", run: () => toggleBookmark(ed.view) },
-    { label: "下一个书签", shortcut: "F2", run: () => gotoBookmark(ed.view, true) },
-    { label: "上一个书签", shortcut: "Shift+F2", run: () => gotoBookmark(ed.view, false) },
-    { label: "清除全部书签", run: () => clearAllBookmarks(ed.view) },
-    { label: "合并多光标", shortcut: "Esc", run: () => collapseCursors(ed.view) },
-    { label: "转换为大写", shortcut: "Ctrl+Shift+U", run: () => toggleCase(ed.view, true) },
-    { label: "转换为小写", shortcut: "Ctrl+U", run: () => toggleCase(ed.view, false) },
-    { label: "行首字母大写", run: () => capitalizeLines(ed.view) },
-    { label: "行升序排序", run: () => sortLines(ed.view, false) },
-    { label: "行降序排序", run: () => sortLines(ed.view, true) },
-    { label: "删除重复行", run: () => removeDuplicateLines(ed.view) },
-    { label: "删除空行", run: () => removeEmptyLines(ed.view) },
-    { label: "修剪行尾空格", run: () => trimTrailingSpaces(ed.view) },
-    { label: "Tab 转空格", run: () => tabToSpaces(ed.view, cfg.tabSize) },
-    { label: "行首空格转 Tab", run: () => spacesToTab(ed.view, cfg.tabSize) },
-    { label: "插入日期时间", run: () => insertDateTime(ed.view) },
-    { label: "JSON 格式化", shortcut: "Ctrl+Alt+J", run: () => toolJSON(ed.view, false) },
-    { label: "JSON 压缩", run: () => toolJSON(ed.view, true) },
-    { label: "Base64 编码", run: () => toolBase64(ed.view, false) },
-    { label: "Base64 解码", run: () => toolBase64(ed.view, true) },
-    { label: "URL 编码", run: () => toolURL(ed.view, false) },
-    { label: "URL 解码", run: () => toolURL(ed.view, true) },
-    { label: "时间戳 ↔ 日期互转", run: () => toolTimestamp(ed.view) },
-    { label: "正则测试器…", run: () => showRegexTester(ed.view) },
-    { label: "自动换行", run: toggleWrap },
-    { label: "暗色主题", run: toggleTheme },
-    { label: "Markdown 实时预览", shortcut: "Ctrl+Shift+V", run: togglePreview },
-    { label: "切换语法高亮…", run: switchLanguage },
-    { label: "禅模式（隐藏界面装饰）", shortcut: "F10", run: toggleZen },
-    { label: "全屏", shortcut: "F11", run: toggleFullscreen },
-    { label: "放大字体", shortcut: "Ctrl+=", run: () => zoom(1) },
-    { label: "缩小字体", shortcut: "Ctrl+-", run: () => zoom(-1) },
-    { label: "重置字体", shortcut: "Ctrl+0", run: zoomReset },
-    { label: "切换编码…", run: switchEncoding },
-    { label: "切换换行符…", run: switchEOL },
-    { label: "字体与主题…", run: () => showSettings("editor") },
-    { label: "右键菜单管理…", run: () => showSettings("ctx") },
-    { label: "文件关联与系统集成…", run: () => showSettings("assoc") },
-  ];
+// ---------- 命令注册表 ----------
+// 菜单、命令面板与快捷键共用这一份数据：新增命令只改这里，
+// 避免此前三处重复导致的标签/快捷键漂移。keys 中的省略字段表示必须为 false。
+const COMMANDS = [
+  // 文件
+  { id: "file.new", label: "新建", shortcut: "Ctrl+N", keys: [{ key: "n", ctrl: true }], run: cmdNew },
+  { id: "file.open", label: "打开…", shortcut: "Ctrl+O", keys: [{ key: "o", ctrl: true }], run: cmdOpen },
+  { id: "file.save", label: "保存", shortcut: "Ctrl+S", keys: [{ key: "s", ctrl: true }], run: cmdSave },
+  { id: "file.saveAs", label: "另存为…", shortcut: "Ctrl+Shift+S", keys: [{ key: "s", ctrl: true, shift: true }], run: cmdSaveAs },
+  { id: "file.saveAll", label: "全部保存", shortcut: "Ctrl+Alt+S", keys: [{ key: "s", ctrl: true, alt: true }], run: saveAllTabs },
+  { id: "file.close", label: "关闭标签", shortcut: "Ctrl+W", keys: [{ key: "w", ctrl: true }], run: cmdClose },
+  { id: "file.closeAll", label: "关闭全部标签", run: closeAllTabs },
+  { id: "file.exit", label: "退出", palette: false, run: cmdExit },
+
+  // 编辑
+  { id: "edit.undo", label: "撤销", shortcut: "Ctrl+Z", run: () => undo(ed.view) },
+  { id: "edit.redo", label: "重做", shortcut: "Ctrl+Y", keys: [{ key: "y", ctrl: true }], run: () => redo(ed.view) },
+  { id: "edit.upper", label: "转换为大写", shortcut: "Ctrl+Shift+U", keys: [{ key: "u", ctrl: true, shift: true }], run: () => toggleCase(ed.view, true) },
+  { id: "edit.lower", label: "转换为小写", shortcut: "Ctrl+U", keys: [{ key: "u", ctrl: true, shift: false }], run: () => toggleCase(ed.view, false) },
+  { id: "edit.capitalize", label: "行首字母大写", run: () => capitalizeLines(ed.view) },
+  { id: "edit.dupLine", label: "复制并插入当前行", shortcut: "Ctrl+D", keys: [{ key: "d", ctrl: true }], run: () => copyLineDown(ed.view) },
+  { id: "edit.deleteLine", label: "删除当前行", shortcut: "Ctrl+L", keys: [{ key: "l", ctrl: true }], run: () => deleteLine(ed.view) },
+  { id: "edit.moveUp", label: "当前行上移", shortcut: "Ctrl+Shift+↑", keys: [{ key: "arrowup", ctrl: true, shift: true }], run: () => moveLineUp(ed.view) },
+  { id: "edit.moveDown", label: "当前行下移", shortcut: "Ctrl+Shift+↓", keys: [{ key: "arrowdown", ctrl: true, shift: true }], run: () => moveLineDown(ed.view) },
+  { id: "edit.collapseCursors", label: "合并多光标", shortcut: "Esc", run: () => collapseCursors(ed.view) },
+  { id: "edit.sortAsc", label: "行升序排序", run: () => sortLines(ed.view, false) },
+  { id: "edit.sortDesc", label: "行降序排序", run: () => sortLines(ed.view, true) },
+  { id: "edit.dedupe", label: "删除重复行", run: () => removeDuplicateLines(ed.view) },
+  { id: "edit.removeEmpty", label: "删除空行", run: () => removeEmptyLines(ed.view) },
+  { id: "edit.trim", label: "修剪行尾空格", run: () => trimTrailingSpaces(ed.view) },
+  { id: "edit.tabsToSpaces", label: "Tab 转空格", run: () => tabToSpaces(ed.view, cfg.tabSize) },
+  { id: "edit.spacesToTab", label: "行首空格转 Tab", run: () => spacesToTab(ed.view, cfg.tabSize) },
+  { id: "edit.insertTime", label: "插入日期时间", run: () => insertDateTime(ed.view) },
+
+  // 搜索与导航
+  { id: "search.find", label: "查找…", shortcut: "Ctrl+F", keys: [{ key: "f", ctrl: true, shift: false }], run: () => find && find.show() },
+  { id: "search.replace", label: "替换…", shortcut: "Ctrl+H", keys: [{ key: "h", ctrl: true, shift: false }], run: () => { if (find) { find.show(); find.focusReplace(); } } },
+  { id: "search.inFiles", label: "在文件中查找…", shortcut: "Ctrl+Shift+F", keys: [{ key: "f", ctrl: true, shift: true }], run: () => searchFiles && searchFiles.show() },
+  { id: "search.goto", label: "转到行…", shortcut: "Ctrl+G", keys: [{ key: "g", ctrl: true, shift: false }], run: cmdGotoLine },
+  { id: "search.palette", label: "命令面板…", shortcut: "Ctrl+Shift+P", keys: [{ key: "p", ctrl: true, shift: true }], run: showPalette },
+  { id: "search.quickOpen", label: "快速打开…", shortcut: "Ctrl+P", keys: [{ key: "p", ctrl: true, shift: false }], run: showQuickOpen },
+
+  // 视图
+  { id: "view.wrap", label: "自动换行", run: toggleWrap },
+  { id: "view.dark", label: "暗色主题", run: toggleTheme },
+  { id: "view.whitespace", label: "显示空白字符", run: toggleWhitespace },
+  { id: "view.preview", label: "Markdown 实时预览", shortcut: "Ctrl+Shift+V", keys: [{ key: "v", ctrl: true, shift: true }], run: togglePreview },
+  { id: "view.zoomIn", label: "放大字体", shortcut: "Ctrl+=", keys: [{ key: "=", ctrl: true }, { key: "+", ctrl: true }], run: () => zoom(1) },
+  { id: "view.zoomOut", label: "缩小字体", shortcut: "Ctrl+-", keys: [{ key: "-", ctrl: true }], run: () => zoom(-1) },
+  { id: "view.zoomReset", label: "重置字体", shortcut: "Ctrl+0", keys: [{ key: "0", ctrl: true }], run: zoomReset },
+  { id: "view.bookmarkToggle", label: "添加/移除书签", shortcut: "Ctrl+F2", keys: [{ key: "f2", ctrl: true }], run: () => toggleBookmark(ed.view) },
+  { id: "view.bookmarkPrev", label: "上一个书签", shortcut: "Shift+F2", keys: [{ key: "f2", shift: true }], run: () => gotoBookmark(ed.view, false) },
+  { id: "view.bookmarkNext", label: "下一个书签", shortcut: "F2", keys: [{ key: "f2" }], run: () => gotoBookmark(ed.view, true) },
+  { id: "view.bookmarkClear", label: "清除全部书签", run: () => clearAllBookmarks(ed.view) },
+  { id: "view.language", label: "切换语法高亮…", run: switchLanguage },
+  { id: "view.zen", label: "禅模式（隐藏界面装饰）", shortcut: "F10", keys: [{ key: "f10" }], run: toggleZen },
+  { id: "view.fullscreen", label: "全屏", shortcut: "F11", keys: [{ key: "f11" }], run: toggleFullscreen },
+  { id: "view.encoding", label: "切换编码…", run: switchEncoding },
+  { id: "view.eol", label: "切换换行符…", run: switchEOL },
+
+  // 工具
+  { id: "tools.jsonFormat", label: "JSON 格式化", shortcut: "Ctrl+Alt+J", keys: [{ key: "j", ctrl: true, alt: true }], run: () => toolJSON(ed.view, false) },
+  { id: "tools.jsonMin", label: "JSON 压缩", run: () => toolJSON(ed.view, true) },
+  { id: "tools.base64Enc", label: "Base64 编码", run: () => toolBase64(ed.view, false) },
+  { id: "tools.base64Dec", label: "Base64 解码", run: () => toolBase64(ed.view, true) },
+  { id: "tools.urlEnc", label: "URL 编码", run: () => toolURL(ed.view, false) },
+  { id: "tools.urlDec", label: "URL 解码", run: () => toolURL(ed.view, true) },
+  { id: "tools.timestamp", label: "时间戳 ↔ 日期互转", run: () => toolTimestamp(ed.view) },
+  { id: "tools.regex", label: "正则测试器…", run: () => showRegexTester(ed.view) },
+
+  // 设置
+  { id: "settings.editor", label: "字体与主题…", run: () => showSettings("editor") },
+  { id: "settings.ctx", label: "右键菜单管理…", run: () => showSettings("ctx") },
+  { id: "settings.assoc", label: "文件关联与系统集成…", run: () => showSettings("assoc") },
+  { id: "settings.about", label: "关于 LitePad…", palette: false, run: () => showSettings("about") },
+  { id: "settings.resetCtx", label: "恢复默认右键菜单", palette: false, run: resetContextMenu },
+
+  // 仅快捷键（不进入菜单/命令面板）
+  { id: "nav.cursorUp", label: "添加上方光标", palette: false, keys: [{ key: "arrowup", ctrl: true, alt: true }], run: () => addCursorVertical(ed.view, -1) },
+  { id: "nav.cursorDown", label: "添加下方光标", palette: false, keys: [{ key: "arrowdown", ctrl: true, alt: true }], run: () => addCursorVertical(ed.view, 1) },
+  { id: "nav.prevTab", label: "上一个标签", palette: false, keys: [{ key: "tab", ctrl: true, shift: true }], run: () => cycleTab(-1) },
+  { id: "nav.nextTab", label: "下一个标签", palette: false, keys: [{ key: "tab", ctrl: true, shift: false }], run: () => cycleTab(1) },
+];
+const CMD = Object.fromEntries(COMMANDS.map((c) => [c.id, c]));
+
+function menuItem(id) {
+  const c = CMD[id];
+  return { label: c.label, shortcut: c.shortcut, run: c.run };
 }
+
+function checkedItem(id, checked) {
+  const c = CMD[id];
+  return { label: (checked ? "✓ " : "   ") + c.label, shortcut: c.shortcut, run: c.run };
+}
+
+function commandsList() {
+  return COMMANDS.filter((c) => c.palette !== false)
+    .map((c) => ({ label: c.label, hint: c.shortcut || "", run: c.run }));
+}
+
+// ---------- 菜单 ----------
 
 const MENUS = {
   file: () => {
@@ -704,93 +748,96 @@ const MENUS = {
       run: () => openByPath(p),
     }));
     return [
-      { label: "新建", shortcut: "Ctrl+N", run: cmdNew },
-      { label: "打开…", shortcut: "Ctrl+O", run: cmdOpen },
+      menuItem("file.new"),
+      menuItem("file.open"),
       { sep: true },
-      { label: "保存", shortcut: "Ctrl+S", run: cmdSave },
-      { label: "另存为…", shortcut: "Ctrl+Shift+S", run: cmdSaveAs },
-      { label: "全部保存", shortcut: "Ctrl+Alt+S", run: saveAllTabs },
+      menuItem("file.save"),
+      menuItem("file.saveAs"),
+      menuItem("file.saveAll"),
       { sep: true },
-      { label: "关闭标签", shortcut: "Ctrl+W", run: cmdClose },
-      { label: "关闭全部标签", run: closeAllTabs },
+      menuItem("file.close"),
+      menuItem("file.closeAll"),
       ...(recents.length ? [{ sep: true }, ...recents] : []),
       { sep: true },
-      { label: "退出", run: cmdExit },
+      menuItem("file.exit"),
     ];
   },
   edit: () => [
-    { label: "撤销", shortcut: "Ctrl+Z", run: () => undo(ed.view) },
-    { label: "重做", shortcut: "Ctrl+Y", run: () => redo(ed.view) },
+    menuItem("edit.undo"),
+    menuItem("edit.redo"),
     { sep: true },
-    { label: "转换为大写", shortcut: "Ctrl+Shift+U", run: () => toggleCase(ed.view, true) },
-    { label: "转换为小写", shortcut: "Ctrl+U", run: () => toggleCase(ed.view, false) },
-    { label: "行首字母大写", run: () => capitalizeLines(ed.view) },
+    menuItem("edit.upper"),
+    menuItem("edit.lower"),
+    menuItem("edit.capitalize"),
     { sep: true },
-    { label: "复制并插入当前行", shortcut: "Ctrl+D", run: () => copyLineDown(ed.view) },
-    { label: "删除当前行", shortcut: "Ctrl+L", run: () => deleteLine(ed.view) },
-    { label: "当前行上移", shortcut: "Ctrl+Shift+↑", run: () => moveLineUp(ed.view) },
-    { label: "当前行下移", shortcut: "Ctrl+Shift+↓", run: () => moveLineDown(ed.view) },
+    menuItem("edit.dupLine"),
+    menuItem("edit.deleteLine"),
+    menuItem("edit.moveUp"),
+    menuItem("edit.moveDown"),
     { sep: true },
-    { label: "行升序排序", run: () => sortLines(ed.view, false) },
-    { label: "行降序排序", run: () => sortLines(ed.view, true) },
-    { label: "删除重复行", run: () => removeDuplicateLines(ed.view) },
-    { label: "删除空行", run: () => removeEmptyLines(ed.view) },
-    { label: "修剪行尾空格", run: () => trimTrailingSpaces(ed.view) },
+    menuItem("edit.sortAsc"),
+    menuItem("edit.sortDesc"),
+    menuItem("edit.dedupe"),
+    menuItem("edit.removeEmpty"),
+    menuItem("edit.trim"),
     { sep: true },
-    { label: "Tab 转空格", run: () => tabToSpaces(ed.view, cfg.tabSize) },
-    { label: "行首空格转 Tab", run: () => spacesToTab(ed.view, cfg.tabSize) },
-    { label: "插入日期时间", run: () => insertDateTime(ed.view) },
+    menuItem("edit.tabsToSpaces"),
+    menuItem("edit.spacesToTab"),
+    menuItem("edit.insertTime"),
   ],
   search: () => [
-    { label: "查找…", shortcut: "Ctrl+F", run: () => find && find.show() },
-    { label: "替换…", shortcut: "Ctrl+H", run: () => { if (find) { find.show(); find.focusReplace(); } } },
-    { label: "转到行…", shortcut: "Ctrl+G", run: cmdGotoLine },
-    { label: "命令面板…", shortcut: "Ctrl+Shift+P", run: () => showPalette() },
-    { label: "快速打开…", shortcut: "Ctrl+P", run: () => showQuickOpen() },
+    menuItem("search.find"),
+    menuItem("search.replace"),
+    { sep: true },
+    menuItem("search.inFiles"),
+    menuItem("search.goto"),
+    { sep: true },
+    menuItem("search.palette"),
+    menuItem("search.quickOpen"),
   ],
   view: () => [
-    { label: (cfg.wrap ? "✓ " : "   ") + "自动换行", run: toggleWrap },
-    { label: (cfg.theme === "dark" ? "✓ " : "   ") + "暗色主题", run: toggleTheme },
-    { label: (cfg.showWhitespace ? "✓ " : "   ") + "显示空白字符", run: toggleWhitespace },
-    { label: (preview && preview.isOn() ? "✓ " : "   ") + "Markdown 实时预览", shortcut: "Ctrl+Shift+V", run: togglePreview },
+    checkedItem("view.wrap", !!cfg.wrap),
+    checkedItem("view.dark", cfg.theme === "dark"),
+    checkedItem("view.whitespace", !!cfg.showWhitespace),
+    checkedItem("view.preview", !!(preview && preview.isOn())),
     { sep: true },
-    { label: "放大字体", shortcut: "Ctrl+=", run: () => zoom(1) },
-    { label: "缩小字体", shortcut: "Ctrl+-", run: () => zoom(-1) },
-    { label: "重置字体", shortcut: "Ctrl+0", run: zoomReset },
+    menuItem("view.zoomIn"),
+    menuItem("view.zoomOut"),
+    menuItem("view.zoomReset"),
     { sep: true },
-    { label: "添加/移除书签", shortcut: "Ctrl+F2", run: () => toggleBookmark(ed.view) },
-    { label: "下一个书签", shortcut: "F2", run: () => gotoBookmark(ed.view, true) },
-    { label: "上一个书签", shortcut: "Shift+F2", run: () => gotoBookmark(ed.view, false) },
-    { label: "清除全部书签", run: () => clearAllBookmarks(ed.view) },
+    menuItem("view.bookmarkToggle"),
+    menuItem("view.bookmarkNext"),
+    menuItem("view.bookmarkPrev"),
+    menuItem("view.bookmarkClear"),
     { sep: true },
-    { label: "切换语法高亮…", run: switchLanguage },
-    { label: "禅模式（隐藏界面装饰）", shortcut: "F10", run: toggleZen },
-    { label: "全屏", shortcut: "F11", run: toggleFullscreen },
+    menuItem("view.language"),
+    menuItem("view.zen"),
+    menuItem("view.fullscreen"),
     { sep: true },
-    { label: "切换编码…", run: switchEncoding },
-    { label: "切换换行符…", run: switchEOL },
+    menuItem("view.encoding"),
+    menuItem("view.eol"),
   ],
   tools: () => [
-    { label: "JSON 格式化", shortcut: "Ctrl+Alt+J", run: () => toolJSON(ed.view, false) },
-    { label: "JSON 压缩", run: () => toolJSON(ed.view, true) },
+    menuItem("tools.jsonFormat"),
+    menuItem("tools.jsonMin"),
     { sep: true },
-    { label: "Base64 编码", run: () => toolBase64(ed.view, false) },
-    { label: "Base64 解码", run: () => toolBase64(ed.view, true) },
-    { label: "URL 编码", run: () => toolURL(ed.view, false) },
-    { label: "URL 解码", run: () => toolURL(ed.view, true) },
+    menuItem("tools.base64Enc"),
+    menuItem("tools.base64Dec"),
+    menuItem("tools.urlEnc"),
+    menuItem("tools.urlDec"),
     { sep: true },
-    { label: "时间戳 ↔ 日期互转", run: () => toolTimestamp(ed.view) },
-    { label: "正则测试器…", run: () => showRegexTester(ed.view) },
+    menuItem("tools.timestamp"),
+    menuItem("tools.regex"),
     { sep: true },
-    { label: "插入日期时间", run: () => insertDateTime(ed.view) },
+    menuItem("edit.insertTime"),
   ],
   settings: () => [
-    { label: "字体与主题…", run: () => showSettings("editor") },
-    { label: "右键菜单管理…", run: () => showSettings("ctx") },
-    { label: "文件关联与系统集成…", run: () => showSettings("assoc") },
-    { label: "关于 LitePad…", run: () => showSettings("about") },
+    menuItem("settings.editor"),
+    menuItem("settings.ctx"),
+    menuItem("settings.assoc"),
+    menuItem("settings.about"),
     { sep: true },
-    { label: "恢复默认右键菜单", run: resetContextMenu },
+    menuItem("settings.resetCtx"),
   ],
 };
 
@@ -959,8 +1006,7 @@ async function showSettings(tab = "editor") {
 // ---------- 命令面板 / 快速打开 ----------
 function showPalette() {
   if (!palette) return;
-  palette.show("命令面板 — 输入以过滤，↑↓ 选择，Enter 执行",
-    commandsList().map((c) => ({ label: c.label, hint: c.shortcut || "", run: c.run })));
+  palette.show("命令面板 — 输入以过滤，↑↓ 选择，Enter 执行", commandsList());
 }
 
 function showQuickOpen() {
@@ -1005,8 +1051,8 @@ function flushSession() {
   const A = App();
   if (!A || !ed) return;
   const paths = tabs.filter((t) => t.path).map((t) => t.path);
-  const idx = tabs.findIndex((t) => t.id === activeId);
-  A.SaveSession(paths, Math.max(0, idx)).catch(() => {});
+  const active = tabs.find((t) => t.id === activeId);
+  A.SaveSession(paths, active && active.path ? active.path : "").catch(() => {});
   A.SyncWatchers(paths).catch(() => {});
 }
 
@@ -1022,63 +1068,59 @@ async function openByPath(path) {
   }
 }
 
+// 从搜索结果跳转到指定文件的指定行。
+async function openAtLine(path, line) {
+  const A = App();
+  if (!A) return;
+  try {
+    const p = await A.OpenPath(path);
+    if (!p) return;
+    openTab(p);
+    const doc = ed.view.state.doc;
+    const target = doc.line(Math.min(Math.max(1, line || 1), doc.lines)).from;
+    ed.view.dispatch({ selection: { anchor: target }, scrollIntoView: true });
+    ed.view.focus();
+    updateStatus();
+  } catch (e) {
+    await showError("无法打开文件：" + path + "\n" + ((e && e.message) || e));
+  }
+}
+
 // ---------- 快捷键 ----------
+// 按注册表匹配按键，避免快捷键与菜单/命令面板再次分叉。
+function matchesKey(e, k) {
+  if (e.key.toLowerCase() !== k.key.toLowerCase()) return false;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (!!k.ctrl !== ctrl) return false;
+  if (k.shift !== undefined && !!k.shift !== e.shiftKey) return false;
+  if (k.alt !== undefined && !!k.alt !== e.altKey) return false;
+  return true;
+}
+
 document.addEventListener("keydown", (e) => {
   if (!ed) return;
-  const ctrl = e.ctrlKey || e.metaKey;
-  const key = e.key.toLowerCase();
-
-  // 功能键
-  if (e.key === "F2") {
-    e.preventDefault(); e.stopPropagation();
-    if (e.ctrlKey) toggleBookmark(ed.view);
-    else gotoBookmark(ed.view, !e.shiftKey);
-    return;
-  }
-  if (e.key === "F11") { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); return; }
-  if (e.key === "F10") { e.preventDefault(); e.stopPropagation(); toggleZen(); return; }
 
   // Esc：优先由查找/命令面板/模态框处理，否则合并多光标
-  if (e.key === "Escape" && !ctrl && !e.altKey) {
+  if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const paletteOpen = !$("#palette").classList.contains("hidden");
     const findOpen = find && find.isOpen();
-    if (!paletteOpen && !findOpen && ed.view.state.selection.ranges.length > 1) {
+    const searchOpen = searchFiles && searchFiles.isOpen();
+    if (!paletteOpen && !findOpen && !searchOpen && ed.view.state.selection.ranges.length > 1) {
       e.preventDefault(); e.stopPropagation();
       collapseCursors(ed.view);
     }
     return;
   }
 
-  if (!ctrl) return;
-  const stop = () => { e.preventDefault(); e.stopPropagation(); };
-
-  if (key === "n") { stop(); cmdNew(); }
-  else if (key === "o") { stop(); cmdOpen(); }
-  else if (key === "s" && e.shiftKey) { stop(); cmdSaveAs(); }
-  else if (key === "s" && e.altKey) { stop(); saveAllTabs(); }
-  else if (key === "s") { stop(); cmdSave(); }
-  else if (key === "w") { stop(); cmdClose(); }
-  else if (key === "f") { stop(); if (find) find.show(); }
-  else if (key === "h") { stop(); if (find) { find.show(); find.focusReplace(); } }
-  else if (key === "g") { stop(); cmdGotoLine(); }
-  else if (key === "p" && e.shiftKey) { stop(); showPalette(); }
-  else if (key === "p") { stop(); showQuickOpen(); }
-  else if (key === "v" && e.shiftKey) { stop(); togglePreview(); }
-  else if (key === "y") { stop(); redo(ed.view); }
-  else if (key === "d") { stop(); copyLineDown(ed.view); }
-  else if (key === "l") { stop(); deleteLine(ed.view); }
-  else if (key === "u" && e.shiftKey) { stop(); toggleCase(ed.view, true); }
-  else if (key === "u") { stop(); toggleCase(ed.view, false); }
-  else if (key === "j" && e.altKey) { stop(); toolJSON(ed.view, false); }
-  else if (key === "=" || key === "+") { stop(); zoom(1); }
-  else if (key === "-") { stop(); zoom(-1); }
-  else if (key === "0") { stop(); zoomReset(); }
-  else if (key === "tab") { stop(); cycleTab(e.shiftKey ? -1 : 1); }
-  else if (key === "arrowup" && e.altKey) { stop(); addCursorVertical(ed.view, -1); }
-  else if (key === "arrowdown" && e.altKey) { stop(); addCursorVertical(ed.view, 1); }
-  else if (key === "arrowup" && e.shiftKey) { stop(); moveLineUp(ed.view); }
-  else if (key === "arrowdown" && e.shiftKey) { stop(); moveLineDown(ed.view); }
-  // Ctrl+Z / Ctrl+Shift+Z 交给 CodeMirror 默认历史键位
+  for (const c of COMMANDS) {
+    if (c.keys && c.keys.some((k) => matchesKey(e, k))) {
+      e.preventDefault();
+      e.stopPropagation();
+      c.run();
+      return;
+    }
+  }
+  // Ctrl+Z / Ctrl+Shift+Z 仍在 CodeMirror 默认历史键位中处理。
 }, true);
 
 function cycleTab(dir) {
@@ -1091,6 +1133,17 @@ function cycleTab(dir) {
 // ---------- 拖放 / 退出确认 ----------
 onEvent("files:dropped", (paths) => {
   (paths || []).forEach((p) => openByPath(p));
+});
+
+// 单实例：第二个进程把命令行文件转发给已运行的窗口。
+onEvent("app:open-paths", async () => {
+  if (!ed) return; // 启动早期收到时留给 boot 的 TakeStartupFiles 处理
+  const A = App();
+  if (!A) return;
+  try {
+    const paths = await A.TakeStartupFiles();
+    for (const p of paths) await openByPath(p);
+  } catch { /* 忽略转发失败 */ }
 });
 
 onEvent("app:confirm-exit", async () => {
@@ -1172,9 +1225,8 @@ async function boot() {
   // 命令行/文件关联启动带来的文件优先打开
   let startupOpened = false;
   try {
-    const files = await A.StartupFiles();
+    const files = await A.TakeStartupFiles();
     if (files && files.length) {
-      await A.ClearStartupFiles();
       for (const p of files) {
         try {
           const payload = await A.OpenPath(p);
@@ -1197,7 +1249,13 @@ async function boot() {
       if (tabs.length > 1) {
         tabs.splice(0, 1); // 移除保底空标签
         if (!startupOpened) {
-          const idx = Math.min(Math.max(0, sess.active), tabs.length - 1);
+          // 优先按路径恢复活动标签；旧会话只有下标时退回下标逻辑。
+          const byPath = sess.activePath
+            ? tabs.findIndex((t) => t.path && pathKey(t.path) === pathKey(sess.activePath))
+            : -1;
+          const idx = byPath >= 0
+            ? byPath
+            : Math.min(Math.max(0, sess.active || 0), tabs.length - 1);
           activateTab(tabs[Math.max(0, idx)].id);
         }
       }
@@ -1207,6 +1265,16 @@ async function boot() {
   // 查找面板与命令面板
   find = createFindPanel({ viewRef: () => ed && ed.view, container: $("#find-panel") });
   palette = createPalette({ container: $("#palette") });
+  searchFiles = createSearchFiles({
+    app: App,
+    getRoot: () => {
+      const t = activeTab();
+      if (!t || !t.path) return "";
+      const i = Math.max(t.path.lastIndexOf("\\"), t.path.lastIndexOf("/"));
+      return i > 0 ? t.path.slice(0, i) : "";
+    },
+    onOpen: openAtLine,
+  });
 
   updateStatus();
   renderPreview();

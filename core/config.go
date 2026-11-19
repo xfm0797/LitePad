@@ -43,8 +43,9 @@ type IntegrationPrefs struct {
 
 // Session 用于重启后恢复上次打开的标签页。
 type Session struct {
-	Paths  []string `json:"paths"`  // 打开的文件路径
-	Active int      `json:"active"` // 活动标签索引
+	Paths      []string `json:"paths"`                // 打开的文件路径
+	Active     int      `json:"active,omitempty"`     // 旧版本保存的活动标签索引（仅用于兼容）
+	ActivePath string   `json:"activePath,omitempty"` // 活动标签的文件路径
 }
 
 // ConfigStore 负责配置与 会话的磁盘读写。

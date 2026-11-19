@@ -17,7 +17,17 @@ var assets embed.FS
 var wailsConfig []byte
 
 func main() {
+	// 已有实例时把启动文件转发过去并退出；转发失败则退回旧行为（再开一个窗口）。
+	single, primary := acquireSingleInstance()
+	if !primary && forwardToPrimary(startupFiles()) {
+		return
+	}
+
 	app := NewApp()
+	app.single = single
+	if single != nil {
+		defer single.Close()
+	}
 
 	winW, winH := initialWindowSize()
 

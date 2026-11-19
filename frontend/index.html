@@ -38,6 +38,18 @@
           <span id="find-count"></span>
         </div>
       </div>
+      <div id="search-results" class="hidden">
+        <div class="sr-form">
+          <input id="sr-query" type="text" placeholder="在文件中查找" />
+          <input id="sr-root" type="text" placeholder="文件夹路径" />
+          <label class="sr-opt"><input type="checkbox" id="sr-case" /> 区分大小写</label>
+          <label class="sr-opt"><input type="checkbox" id="sr-word" /> 整词</label>
+          <button id="sr-run">查找</button>
+          <button id="sr-close" title="关闭">✕</button>
+        </div>
+        <div id="sr-summary"></div>
+        <div id="sr-list"></div>
+      </div>
       <div id="statusbar">
         <span id="st-pos">行 1, 列 1</span>
         <span id="st-sel">选中 0</span>
