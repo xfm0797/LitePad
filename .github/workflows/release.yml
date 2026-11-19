@@ -46,15 +46,48 @@ jobs:
       - name: Run Go tests
         run: go test ./...
 
-      - name: Generate Windows icon and manifest resource
-        run: go run github.com/akavel/rsrc@v0.10.2 -ico build/app.ico -manifest build/app.manifest -o rsrc_windows_amd64.syso
+      - name: Extract version from wails.json
+        id: version
+        shell: pwsh
+        run: |
+          $wails = Get-Content wails.json -Raw | ConvertFrom-Json
+          $v = $wails.info.productVersion
+          Write-Host "version from wails.json: $v"
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
-      - name: Build LitePad.exe
+      - name: Generate Windows resources (icon + manifest + version)
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $json = @"
+          {
+            "Version": {
+              "CompanyName": "LitePad",
+              "ProductName": "LitePad",
+              "FileVersion": "$v",
+              "ProductVersion": "$v",
+              "OriginalFilename": "LitePad.exe",
+              "InternalName": "LitePad"
+            },
+            "Icons": ["build/app.ico"]
+          }
+          "@
+          Set-Content -Path build/version.json -Value $json
+          Write-Host "build/version.json written for version $v"
+
+      - name: Build Windows exe with embedded version info
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: '0'
-        run: go build -tags desktop,production -trimpath -ldflags "-s -w -H windowsgui" -o LitePad.exe .
+        run: |
+          go run github.com/tc-hib/winres@latest --manifest build/app.manifest --icon build/app.ico --res build/version.json -o rsrc_windows_amd64.syso
+          go build -tags desktop,production -trimpath -ldflags "-s -w -H windowsgui" -o LitePad.exe .
+
+      - name: Build Inno Setup installer
+        uses: ilammy/setup-iss@v1
+        with:
+          script: release/LitePad.iss
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -62,4 +95,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: LitePad ${{ github.ref_name }}
           generate_notes: true
-          files: LitePad.exe
+          files: |
+            LitePad.exe
+            release/LitePad-Setup-*.exe

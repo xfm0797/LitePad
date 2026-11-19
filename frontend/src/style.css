@@ -154,6 +154,32 @@ body {
 /* Mermaid 图表：SVG 配色由 preview.js 按亮/暗主题注入，这里只负责布局与错误提示 */
 #preview-pane .md-mermaid { margin: .9em 0; }
 #preview-pane .md-mermaid svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+#preview-pane .md-mermaid-toolbar {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+}
+#preview-pane .md-mermaid:hover .md-mermaid-toolbar { display: flex; }
+#preview-pane .md-mermaid-toolbar button {
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1;
+}
+#preview-pane .md-mermaid-toolbar button:hover { background: var(--accent); color: var(--accent-fg); }
+#preview-pane .md-mermaid { position: relative; }
 #preview-pane .md-mermaid[data-mermaid-state="error"] .md-mermaid-src { border-color: var(--cur-match); }
 #preview-pane .md-mermaid-msg {
   margin-top: 6px;
@@ -201,6 +227,103 @@ body {
 }
 #find-panel button.on, #find-panel button:hover { background: var(--accent); color: var(--accent-fg); }
 #find-count { opacity: .7; font-size: 12px; min-width: 70px; }
+
+/* 大纲侧栏 */
+#outline-pane {
+  flex: 0 0 220px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  overflow: hidden;
+}
+#outline-pane.hidden { display: none; }
+.ow-title {
+  padding: 6px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: .55;
+  border-bottom: 1px solid var(--border);
+}
+#outline-list { overflow: auto; flex: 1; }
+.ow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ow-row:hover { background: var(--bg); }
+.ow-row.ow-active { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.ow-kind {
+  flex: 0 0 18px;
+  text-align: center;
+  color: var(--accent);
+  font-weight: 600;
+}
+.ow-row.ow-active .ow-kind { color: var(--accent-fg); }
+.ow-label { overflow: hidden; text-overflow: ellipsis; }
+.ow-empty { padding: 10px 12px; font-size: 11px; opacity: .5; line-height: 1.5; }
+
+/* 在文件中查找：底部结果面板 */
+#search-results {
+  flex: 0 0 auto;
+  max-height: 38vh;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+#search-results.hidden { display: none; }
+.sr-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.sr-form input[type="text"] {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+#sr-query { width: 220px; }
+#sr-root { flex: 1; min-width: 160px; }
+.sr-opt { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; }
+.sr-form button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.sr-form button:hover { background: var(--accent); color: var(--accent-fg); }
+.sr-form button:disabled { opacity: .5; cursor: default; }
+#sr-summary { padding: 4px 12px; font-size: 12px; opacity: .7; }
+#sr-list { overflow: auto; flex: 1; }
+.sr-row {
+  display: flex;
+  gap: 10px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sr-row:hover { background: var(--accent); color: var(--accent-fg); }
+.sr-loc { flex: 0 0 auto; color: var(--accent); min-width: 160px; }
+.sr-row:hover .sr-loc { color: var(--accent-fg); }
+.sr-text { overflow: hidden; text-overflow: ellipsis; opacity: .85; }
+.sr-empty { padding: 10px 12px; opacity: .6; font-size: 12px; }
 
 /* 状态栏 */
 #statusbar {

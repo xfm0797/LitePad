@@ -39,9 +39,10 @@ type App struct {
 	cfgMu sync.RWMutex
 	cfg   core.Config
 
-	unsaved      atomic.Bool // 存在未保存标签时由前端置位，用于关闭拦截
-	filesMu      sync.Mutex  // 保护 pendingFiles
-	pendingFiles []string    // 启动参数中携带的文件（文件关联双击打开）
+	unsaved      atomic.Bool     // 存在未保存标签时由前端置位，用于关闭拦截
+	filesMu      sync.Mutex      // 保护 pendingFiles
+	pendingFiles []string        // 启动参数中携带的文件（文件关联双击打开）
+	single       *singleInstance // 单实例转发器，nil 表示未启用
 }
 
 // NewApp 构造 App 并加载持久化配置。
@@ -49,11 +50,19 @@ func NewApp() *App {
 	a := &App{}
 	a.store, _ = core.NewConfigStore()
 	if a.store != nil {
-		a.cfg, _ = a.store.LoadConfig()
+		cfg, err := a.store.LoadConfig()
+		if err != nil {
+			core.Warn("failed to load config: %v, using defaults", err)
+			a.cfg = core.DefaultConfig()
+		} else {
+			a.cfg = cfg
+		}
 	} else {
 		a.cfg = core.DefaultConfig()
+		core.Warn("ConfigStore unavailable, using defaults")
 	}
 	a.pendingFiles = startupFiles()
+	core.Info("NewApp ready, pendingFiles=%d", len(a.pendingFiles))
 	return a
 }
 
@@ -80,11 +89,30 @@ func startupFiles() []string {
 // startup 由 Wails 生命周期回调调用。
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// 窗口创建时按工作区居中，随后再显示（main.go 中 StartHidden=true）。
-	winW, winH := initialWindowSize()
-	winX, winY := centerInWorkArea(winW, winH)
-	runtime.WindowSetPosition(ctx, winX, winY)
-	defer runtime.WindowShow(ctx)
+	core.Info("App.startup begin")
+	// 窗口位置优先从配置恢复（需在当前屏幕工作区内，避免另一显示器上保存后打开到屏外）。
+	// 没有可用几何时用工作区居中作为默认值。
+	cfg, err := a.store.LoadConfig()
+	if err == nil && cfg.Geometry.Visible && cfg.Geometry.Width >= minWindowWidth && cfg.Geometry.Height >= minWindowHeight {
+		if geometryFitsWorkArea(cfg.Geometry.X, cfg.Geometry.Y, cfg.Geometry.Width, cfg.Geometry.Height) {
+			runtime.WindowSetSize(ctx, cfg.Geometry.Width, cfg.Geometry.Height)
+			runtime.WindowSetPosition(ctx, cfg.Geometry.X, cfg.Geometry.Y)
+			core.Info("restored window geometry: %dx%d @ (%d,%d)", cfg.Geometry.Width, cfg.Geometry.Height, cfg.Geometry.X, cfg.Geometry.Y)
+			defer runtime.WindowShow(ctx)
+		} else {
+			winW, winH := initialWindowSize()
+			winX, winY := centerInWorkArea(winW, winH)
+			runtime.WindowSetPosition(ctx, winX, winY)
+			core.Info("saved geometry out of work area, fallback to centered")
+			defer runtime.WindowShow(ctx)
+		}
+	} else {
+		winW, winH := initialWindowSize()
+		winX, winY := centerInWorkArea(winW, winH)
+		runtime.WindowSetPosition(ctx, winX, winY)
+		core.Info("no saved geometry, centered")
+		defer runtime.WindowShow(ctx)
+	}
 	// 注册文件拖放：拖入文件后向前端广播事件
 	runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
 		runtime.EventsEmit(ctx, "files:dropped", paths)
@@ -93,7 +121,23 @@ func (a *App) startup(ctx context.Context) {
 	a.watcher = core.NewWatcher()
 	if a.watcher != nil {
 		go a.watchLoop()
+		core.Info("file watcher started")
+	} else {
+		core.Warn("file watcher unavailable")
 	}
+	// 单实例：第二个进程转发的文件并入启动文件队列，由前端统一取出打开。
+	a.single.setHandler(func(paths []string) {
+		if len(paths) > 0 {
+			a.filesMu.Lock()
+			a.pendingFiles = append(a.pendingFiles, paths...)
+			a.filesMu.Unlock()
+		}
+		core.Info("single-instance callback triggered, paths=%v", paths)
+		runtime.WindowShow(ctx)
+		runtime.WindowUnminimise(ctx)
+		runtime.EventsEmit(ctx, "app:open-paths", nil)
+	})
+	core.Info("App.startup done")
 }
 
 // watchLoop 将外部文件变更转发给前端，监视器关闭后退出（不泄漏协程）。
@@ -110,19 +154,46 @@ func (a *App) watchLoop() {
 
 // shutdown 在应用退出时释放资源。
 func (a *App) shutdown(ctx context.Context) {
+	core.Info("App.shutdown begin")
 	if a.watcher != nil {
 		a.watcher.Close()
 	}
+	core.Info("App.shutdown done")
 }
 
-// beforeClose 在窗口关闭前拦截：有未保存内容时通知前端确认。
+// beforeClose 在窗口关闭前拦截：保存窗口几何 + 有未保存内容时通知前端确认。
 // Wails v2 约定返回 true 表示阻止本次关闭。
 func (a *App) beforeClose(ctx context.Context) bool {
+	a.saveGeometry()
 	if a.unsaved.Load() {
+		core.Info("beforeClose blocked: unsaved tabs, waiting for confirm-exit")
 		runtime.EventsEmit(ctx, "app:confirm-exit")
 		return true
 	}
+	core.Info("beforeClose: closing cleanly")
 	return false
+}
+
+// saveGeometry 在窗口关闭前把位置/尺寸写进配置。
+func (a *App) saveGeometry() {
+	if a.ctx == nil || a.store == nil {
+		return
+	}
+	w, h := runtime.WindowGetSize(a.ctx)
+	x, y := runtime.WindowGetPosition(a.ctx)
+	if w < minWindowWidth || h < minWindowHeight {
+		return
+	}
+	visible := geometryFitsWorkArea(x, y, w, h)
+	a.cfgMu.Lock()
+	a.cfg.Geometry = core.WindowGeometry{X: x, Y: y, Width: w, Height: h, Visible: visible}
+	cfg := a.cfg
+	a.cfgMu.Unlock()
+	if err := a.store.SaveConfig(cfg); err != nil {
+		core.Warn("saveGeometry failed: %v", err)
+	} else {
+		core.Info("saveGeometry: %dx%d @ (%d,%d) visible=%v", w, h, x, y, visible)
+	}
 }
 
 // SyncWatchers 将监视列表与当前打开的文件对齐（前端在标签变化时调用）。
@@ -232,6 +303,7 @@ func (a *App) OpenFileDialog() (*FilePayload, error) {
 func (a *App) OpenPath(path string) (*FilePayload, error) {
 	content, enc, eol, err := core.ReadTextFile(path)
 	if err != nil {
+		core.Warn("OpenPath failed: %s: %v", path, err)
 		return nil, err
 	}
 	// 用磁盘字节数而非字符数：中文文件按字符计会显著低估，影响大文件降级判断
@@ -239,6 +311,7 @@ func (a *App) OpenPath(path string) (*FilePayload, error) {
 	if st, statErr := os.Stat(path); statErr == nil {
 		size = st.Size()
 	}
+	core.Info("OpenPath ok: %s size=%d enc=%s eol=%s", filepath.Base(path), size, enc, eol)
 	return &FilePayload{
 		Path:     path,
 		Name:     filepath.Base(path),
@@ -267,7 +340,13 @@ func (a *App) SaveFileDialog(defaultName string) (string, error) {
 
 // WriteFile 以指定编码与换行符写盘（前端传 UTF-8 内容）。
 func (a *App) WriteFile(path string, content string, encoding string, eol string) error {
-	return core.WriteTextFile(path, content, encoding, eol)
+	err := core.WriteTextFile(path, content, encoding, eol)
+	if err != nil {
+		core.Warn("WriteFile failed: %s: %v", path, err)
+	} else {
+		core.Info("WriteFile ok: %s enc=%s eol=%s bytes=%d", filepath.Base(path), encoding, eol, len(content))
+	}
+	return err
 }
 
 // GetConfig 返回当前配置（副本，避免前端拿到内部状态引用）。
@@ -284,11 +363,13 @@ func (a *App) GetConfig() core.Config {
 // 丢掉这些数据，因此这两项始终以服务端为准。
 func (a *App) SaveConfig(cfg core.Config) error {
 	cfg.Normalize()
+	// 内存更新与磁盘写入放在同一把锁内：若锁外写盘，两次并发保存的
+	// 实际落盘顺序可能与逻辑顺序相反，旧快照会覆盖新设置。
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	cfg.RecentFiles = a.cfg.RecentFiles
 	cfg.Integrations = a.cfg.Integrations
 	a.cfg = cfg
-	a.cfgMu.Unlock()
 	if a.store == nil {
 		return nil
 	}
@@ -306,9 +387,9 @@ func (a *App) SetWindowTitle(title string) {
 // AddRecent 将路径加入最近文件列表并持久化，返回更新后的配置。
 func (a *App) AddRecent(path string) (core.Config, error) {
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	a.cfg.RecentFiles = core.PushRecent(a.cfg.RecentFiles, path)
 	updated := a.cfg
-	a.cfgMu.Unlock()
 	if a.store != nil {
 		if err := a.store.SaveConfig(updated); err != nil {
 			return updated, err
@@ -318,11 +399,13 @@ func (a *App) AddRecent(path string) (core.Config, error) {
 }
 
 // SaveSession 持久化当前会话（打开的文件与活动标签）。
-func (a *App) SaveSession(paths []string, active int) error {
+// activePath 记录活动标签对应的文件路径，空标签时为空串；
+// 相比下标，不会因空标签被过滤而产生错位。
+func (a *App) SaveSession(paths []string, activePath string) error {
 	if a.store == nil {
 		return nil
 	}
-	return a.store.SaveSession(core.Session{Paths: paths, Active: active})
+	return a.store.SaveSession(core.Session{Paths: paths, ActivePath: activePath})
 }
 
 // LoadSession 读取会话；无会话文件时返回空列表。
@@ -336,27 +419,26 @@ func (a *App) LoadSession() (core.Session, error) {
 // SetUnsaved 由前端同步「是否存在未保存标签」的状态。
 func (a *App) SetUnsaved(unsaved bool) { a.unsaved.Store(unsaved) }
 
+// FindInFiles 在指定目录下递归查找文本，返回命中的文件/行/列。
+// root 为文件时自动改为其所在目录；query 按纯文本处理（非正则）。
+func (a *App) FindInFiles(root, query string, opts core.SearchOptions) (core.SearchResultSet, error) {
+	return core.SearchInFiles(root, query, opts)
+}
+
 // Quit 强制退出应用（用于未保存确认后的继续退出）。
 func (a *App) Quit() { runtime.Quit(a.ctx) }
 
-// StartupFiles 返回启动命令行中携带的文件（双击关联文件打开）。
-// 前端在启动时取出后应立即调用 ClearStartupFiles，避免重复打开。
-func (a *App) StartupFiles() []string {
+// TakeStartupFiles 原子取出并清空一次性启动文件列表。
+// 前端启动与单实例转发可能并发触发，原子取出可避免同一文件被打开两次。
+func (a *App) TakeStartupFiles() []string {
 	a.filesMu.Lock()
 	defer a.filesMu.Unlock()
 	if len(a.pendingFiles) == 0 {
 		return []string{}
 	}
-	out := make([]string, len(a.pendingFiles))
-	copy(out, a.pendingFiles)
-	return out
-}
-
-// ClearStartupFiles 清空一次性启动文件列表。
-func (a *App) ClearStartupFiles() {
-	a.filesMu.Lock()
+	out := a.pendingFiles
 	a.pendingFiles = nil
-	a.filesMu.Unlock()
+	return out
 }
 
 // AssocFormats 返回设置页可勾选的关联格式清单。
@@ -394,11 +476,12 @@ func (a *App) ApplyAssoc(formats []string, explorerMenu bool, setDefault bool) e
 		return err
 	}
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	a.cfg.Integrations = core.IntegrationPrefs{Formats: clean, ExplorerMenu: explorerMenu, SetDefault: setDefault}
-	updated := a.cfg
-	a.cfgMu.Unlock()
 	if a.store != nil {
-		_ = a.store.SaveConfig(updated)
+		if err := a.store.SaveConfig(a.cfg); err != nil {
+			core.Warn("ApplyAssoc SaveConfig failed: %v", err)
+		}
 	}
 	return nil
 }
@@ -409,11 +492,12 @@ func (a *App) ClearAssoc() error {
 		return err
 	}
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	a.cfg.Integrations = core.IntegrationPrefs{Formats: []string{}, ExplorerMenu: false, SetDefault: false}
-	updated := a.cfg
-	a.cfgMu.Unlock()
 	if a.store != nil {
-		_ = a.store.SaveConfig(updated)
+		if err := a.store.SaveConfig(a.cfg); err != nil {
+			core.Warn("ClearAssoc SaveConfig failed: %v", err)
+		}
 	}
 	return nil
 }

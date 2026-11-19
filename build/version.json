@@ -1,0 +1,11 @@
+{
+  "Version": {
+    "CompanyName": "LitePad",
+    "ProductName": "LitePad",
+    "FileVersion": "1.2.0",
+    "ProductVersion": "1.2.0",
+    "OriginalFilename": "LitePad.exe",
+    "InternalName": "LitePad"
+  },
+  "Icons": ["build/app.ico"]
+}

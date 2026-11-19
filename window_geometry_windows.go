@@ -71,3 +71,34 @@ func centerInWorkArea(w, h int) (int, int) {
 	}
 	return x, y
 }
+
+// geometryFitsWorkArea 判断给定窗口矩形是否至少有 10% 落在当前屏幕工作区内。
+// 10% 阈值比完全包含宽松：用户可能把窗口拖到另一显示器上关闭，此时再启动
+// 到新机器/新显示器时应该回退到居中默认值，而不是出现在屏外。
+func geometryFitsWorkArea(x, y, w, h int) bool {
+	wx, wy, ww, wh := workArea()
+	// 无有效工作区时退化为允许（workArea 已兜底到非零值）
+	if ww <= 0 || wh <= 0 {
+		return false
+	}
+	ax, ay, aw, ah := wx, wy, ww, wh // 工作区
+	bx, by, bw, bh := x, y, w, h
+	ix1 := max(ax, bx)
+	iy1 := max(ay, by)
+	ix2 := min(ax+aw, bx+bw)
+	iy2 := min(ay+ah, by+bh)
+	intersectW := ix2 - ix1
+	intersectH := iy2 - iy1
+	if intersectW <= 0 || intersectH <= 0 {
+		return false
+	}
+	// 相交面积超过窗口面积的 10%
+	return float64(intersectW*intersectH) > float64(bw*bh)*0.10
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

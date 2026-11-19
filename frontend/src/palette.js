@@ -1,5 +1,29 @@
 // palette.js：命令面板（Ctrl+Shift+P）与快速打开（Ctrl+P）共用的浮层组件。
 
+// fuzzyScore 做子序列匹配并打分：连续命中、位置靠前得分更高，
+// 比 includes 更符合“打几个字母就能跳到命令”的使用习惯。
+// 不匹配返回 -1；导出以便单元测试。
+export function fuzzyScore(label, q) {
+  const s = label.toLowerCase();
+  const query = q.toLowerCase();
+  let idx = -1;
+  let score = 0;
+  let streak = 0;
+  for (const ch of query) {
+    const next = s.indexOf(ch, idx + 1);
+    if (next < 0) return -1;
+    if (next === idx + 1) {
+      streak++;
+      score += 2 + streak;
+    } else {
+      streak = 0;
+      score += 1;
+    }
+    idx = next;
+  }
+  return score - s.length * 0.01;
+}
+
 export function createPalette({ container }) {
   const input = container.querySelector("#palette-input");
   const list = container.querySelector("#palette-list");
@@ -30,28 +54,6 @@ export function createPalette({ container }) {
       empty.textContent = "无匹配项";
       list.appendChild(empty);
     }
-  }
-
-  // fuzzyScore 做子序列匹配并打分：连续命中、位置靠前得分更高，
-  // 比 includes 更符合“打几个字母就能跳到命令”的使用习惯。
-  function fuzzyScore(label, q) {
-    const s = label.toLowerCase();
-    let idx = -1;
-    let score = 0;
-    let streak = 0;
-    for (const ch of q) {
-      const next = s.indexOf(ch, idx + 1);
-      if (next < 0) return -1;
-      if (next === idx + 1) {
-        streak++;
-        score += 2 + streak;
-      } else {
-        streak = 0;
-        score += 1;
-      }
-      idx = next;
-    }
-    return score - s.length * 0.01;
   }
 
   function applyFilter() {

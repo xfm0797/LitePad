@@ -19,6 +19,17 @@ type Config struct {
 	RecentFiles  []string         `json:"recentFiles"`    // 最近文件（最新在前，去重，最多 10 条）
 	ContextMenu  ContextMenuPrefs `json:"contextMenu"`    // 右键菜单显示哪些分组
 	Integrations IntegrationPrefs `json:"integrations"`   // 系统集成（文件关联 / 资源管理器菜单）
+	Geometry     WindowGeometry   `json:"geometry,omitempty"`
+	Bookmarks    map[string][]int `json:"bookmarks,omitempty"` // 路径 → 书签行号列表（行号从 1 起）
+}
+
+// WindowGeometry 记录上次关闭时的窗口位置与尺寸，下次启动时尽量还原。
+type WindowGeometry struct {
+	X       int  `json:"x"`       // 左上角 X
+	Y       int  `json:"y"`       // 左上角 Y
+	Width   int  `json:"width"`   // 宽（px）
+	Height  int  `json:"height"`  // 高（px）
+	Visible bool `json:"visible"` // true 表示该几何有效，false 时应忽略（例如用户是在另一显示器上关的）
 }
 
 // ContextMenuPrefs 控制编辑器右键菜单的分组显示。
@@ -43,8 +54,9 @@ type IntegrationPrefs struct {
 
 // Session 用于重启后恢复上次打开的标签页。
 type Session struct {
-	Paths  []string `json:"paths"`  // 打开的文件路径
-	Active int      `json:"active"` // 活动标签索引
+	Paths      []string `json:"paths"`                // 打开的文件路径
+	Active     int      `json:"active,omitempty"`     // 旧版本保存的活动标签索引（仅用于兼容）
+	ActivePath string   `json:"activePath,omitempty"` // 活动标签的文件路径
 }
 
 // ConfigStore 负责配置与 会话的磁盘读写。
@@ -96,6 +108,7 @@ func DefaultConfig() Config {
 		RecentFiles:  []string{},
 		ContextMenu:  DefaultContextMenu(),
 		Integrations: IntegrationPrefs{Formats: []string{}},
+		Bookmarks:    map[string][]int{},
 	}
 }
 
@@ -120,6 +133,9 @@ func (c *Config) Normalize() {
 	}
 	if c.Integrations.Formats == nil {
 		c.Integrations.Formats = []string{}
+	}
+	if c.Bookmarks == nil {
+		c.Bookmarks = map[string][]int{}
 	}
 }
 
