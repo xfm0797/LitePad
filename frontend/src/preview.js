@@ -125,13 +125,64 @@ async function renderMermaidBlocks(root) {
     const id = `litepad-mermaid-${++diagramSeq}`;
     try {
       const { svg } = await mermaid.render(id, src);
-      block.innerHTML = svg; // 仅 mermaid 在 strict 策略下生成的 SVG
+      block.innerHTML = svg + mermaidToolbar();
       block.dataset.mermaidState = "done";
+      wireMermaidToolbar(block);
     } catch (e) {
       cleanupStray(id);
       markError(block, e);
     }
   }
+}
+
+function mermaidToolbar() {
+  return `<div class="md-mermaid-toolbar">
+    <button title="缩小" data-zoom="-">-</button>
+    <button title="放大" data-zoom="+">+</button>
+    <button title="还原" data-zoom="1">1:1</button>
+    <button title="下载 SVG" data-download="svg">↓</button>
+  </div>`;
+}
+
+function wireMermaidToolbar(block) {
+  let scale = 1;
+  const svg = block.querySelector("svg");
+  const bar = block.querySelector(".md-mermaid-toolbar");
+  if (!svg || !bar) return;
+
+  function apply() {
+    svg.style.transformOrigin = "center center";
+    svg.style.transform = `scale(${scale})`;
+    svg.style.transition = "transform .12s ease";
+  }
+
+  bar.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    if (btn.dataset.zoom === "+") scale = Math.min(4, +(scale + 0.2).toFixed(2));
+    else if (btn.dataset.zoom === "-") scale = Math.max(0.3, +(scale - 0.2).toFixed(2));
+    else if (btn.dataset.zoom === "1") scale = 1;
+    else if (btn.dataset.download === "svg") {
+      const serializer = new XMLSerializer();
+      const blob = new Blob([serializer.serializeToString(svg)], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `diagram-${Date.now()}.svg`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+    apply();
+  });
+
+  // Ctrl/⌘ + 鼠标滚轮缩放，方向与浏览器默认一致
+  block.addEventListener("wheel", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    scale = Math.max(0.3, Math.min(4, +(scale + delta).toFixed(2)));
+    apply();
+  }, { passive: false });
 }
 
 export function createPreview({ viewRef, tabRef }) {

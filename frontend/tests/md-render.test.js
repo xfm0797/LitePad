@@ -57,3 +57,31 @@ test("普通代码块保留语言标识且内容转义", () => {
   assert.ok(html.includes("language-js"));
   assert.ok(html.includes("a &lt; b"));
 });
+
+test("setext 标题：=== 为 H1，--- 为 H2", () => {
+  const h1 = renderMarkdown("Title\n===");
+  assert.match(h1, /<h1[^>]*id=.*Title/);
+  const h2 = renderMarkdown("Sub\n---");
+  assert.match(h2, /<h2[^>]*id=.*Sub/);
+});
+
+test("4 空格缩进代码块（GFM）", () => {
+  const html = renderMarkdown("    line1\n    line2\n\npara");
+  assert.ok(html.includes("<pre><code>"));
+  assert.ok(html.includes("line1"));
+  assert.ok(html.includes("<p>para</p>"));
+});
+
+test("多反引号行内代码包含单反引号", () => {
+  const html = renderMarkdown("use ``code with ` inside`` fine");
+  assert.ok(html.includes("<code>code with ` inside</code>"));
+  assert.ok(!html.match(/<code>.*<code>/));
+});
+
+test("引用式链接：[text][ref] 或 [ref][]", () => {
+  const body = renderMarkdown("[Go][golang]\n\n[golang]: https://go.dev \"Go\"");
+  assert.match(body, /href="https:\/\/go\.dev"/);
+
+  const body2 = renderMarkdown("[Go][]\n\n[go]: https://go.dev");
+  assert.match(body2, /href="https:\/\/go\.dev"/);
+});

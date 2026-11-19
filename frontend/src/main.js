@@ -11,6 +11,7 @@ import { createFindPanel } from "./find.js";
 import { createSearchFiles } from "./searchfiles.js";
 import { createPalette } from "./palette.js";
 import { createPreview } from "./preview.js";
+import { createOutline } from "./outline.js";
 import { createStatus } from "./status.js";
 import { openSettings } from "./settings.js";
 import { showModal, showError, toast, pickFromList, showContextMenu } from "./dialogs.js";
@@ -40,6 +41,7 @@ let searchFiles = null; // 在文件中查找面板
 let palette = null;  // 命令面板
 let status = null;   // 状态栏
 let preview = null;  // Markdown 预览
+let outline = null;  // 大纲侧栏
 let fullscreen = false;
 let lastUnsaved = false; // 上次同步给 Go 侧的脏状态，避免每次按键都发 IPC
 
@@ -82,6 +84,7 @@ function onDocUpdate(u) {
   }
   // 预览只随文档内容变化：仅移动光标/选择时重渲染整篇 Markdown 没有意义。
   if (u.docChanged) renderPreview();
+  if (outline) outline.onUpdate(u);
 }
 
 // ---------- 标签 ----------
@@ -135,6 +138,7 @@ function activateTab(id) {
   updateStatus();
   renderTabs();
   renderPreview();
+  if (outline) outline.switchTo();
   persistSession();
 }
 
@@ -685,6 +689,7 @@ const COMMANDS = [
   { id: "view.dark", label: "暗色主题", run: toggleTheme },
   { id: "view.whitespace", label: "显示空白字符", run: toggleWhitespace },
   { id: "view.preview", label: "Markdown 实时预览", shortcut: "Ctrl+Shift+V", keys: [{ key: "v", ctrl: true, shift: true }], run: togglePreview },
+  { id: "view.outline", label: "大纲 / 函数列表", run: toggleOutline },
   { id: "view.zoomIn", label: "放大字体", shortcut: "Ctrl+=", keys: [{ key: "=", ctrl: true }, { key: "+", ctrl: true }], run: () => zoom(1) },
   { id: "view.zoomOut", label: "缩小字体", shortcut: "Ctrl+-", keys: [{ key: "-", ctrl: true }], run: () => zoom(-1) },
   { id: "view.zoomReset", label: "重置字体", shortcut: "Ctrl+0", keys: [{ key: "0", ctrl: true }], run: zoomReset },
@@ -800,6 +805,7 @@ const MENUS = {
     checkedItem("view.dark", cfg.theme === "dark"),
     checkedItem("view.whitespace", !!cfg.showWhitespace),
     checkedItem("view.preview", !!(preview && preview.isOn())),
+    checkedItem("view.outline", !!(outline && outline.isOn())),
     { sep: true },
     menuItem("view.zoomIn"),
     menuItem("view.zoomOut"),
@@ -961,6 +967,10 @@ function toggleTheme() {
 
 function togglePreview() {
   if (preview) preview.toggle();
+}
+
+function toggleOutline() {
+  if (outline) outline.toggle();
 }
 
 function updateStatus() { if (status) status.update(); }
@@ -1218,6 +1228,11 @@ async function boot() {
   preview = createPreview({
     viewRef: () => ed.view,
     tabRef: () => activeTab(),
+  });
+  outline = createOutline({
+    viewRef: () => ed.view,
+    tabRef: () => activeTab(),
+    langFor: (path) => langForPath(path),
   });
 
   blankTab(); // 保底空标签

@@ -1,7 +1,7 @@
 // md-render.js：轻量 Markdown → HTML 渲染器（零依赖，GFM 常用语法，输出已转义防注入）。
-// 支持：表格（含对齐）、任务列表、删除线、自动链接、围栏代码块（语言标识）、
-// 标题锚点、引用、嵌套列表、GFM 软/硬换行；mermaid 围栏输出占位容器交给 preview.js 渲染。
-// 原始 HTML 一律转义，不执行。
+// 支持：标题（ATX + setext）、表格（含对齐）、任务列表、删除线、自动链接、
+// 围栏与缩进代码块、多反引号行内代码、引用式链接、引用、嵌套列表、GFM 软/硬换行；
+// mermaid 围栏输出占位容器交给 preview.js 渲染。原始 HTML 一律转义，不执行。
 
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -30,18 +30,29 @@ function makeSlug(text, state) {
   return n ? `${base}-${n}` : base;
 }
 
-// 行内语法：代码、图片、链接、尖括号自动链接、删除线、粗斜体、裸 URL/邮箱
-function inline(md) {
+// 多反引号行内代码：``code with ` inside``
+function inlineCodeStash(md) {
   const stash = [];
+  let s = md;
+  // 先处理多反引号行内代码（`` ``），内部允许出现单反引号
+  s = s.replace(/(`{2,})([\s\S]+?)\1/g, (m, fence, code) => {
+    stash.push(`<code>${escapeHtml(code)}</code>`);
+    return `\u0001${stash.length - 1}\u0001`;
+  });
+  // 单反引号行内代码（此时多反引号已替换为占位符，不会再被误匹配）
+  s = s.replace(/`([^`\n]+)`/g, (m, code) => {
+    stash.push(`<code>${escapeHtml(code)}</code>`);
+    return `\u0001${stash.length - 1}\u0001`;
+  });
+  return { stash, body: s };
+}
+
+// 行内语法：图片、链接、尖括号自动链接、删除线、粗斜体、裸 URL/邮箱
+function applyInlineSyntax(s, stash) {
   const hold = (html) => {
     stash.push(html);
     return `\u0001${stash.length - 1}\u0001`;
   };
-
-  let s = escapeHtml(md);
-
-  // 行内代码优先占位，避免内部符号被再次解析
-  s = s.replace(/`([^`\n]+)`/g, (m, code) => hold(`<code>${code}</code>`));
 
   // 图片：沿用原有的安全占位展示，不加载外链资源
   s = s.replace(/!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, alt) =>
@@ -50,6 +61,16 @@ function inline(md) {
   // 普通链接（目标允许一层成对括号，如 Wikipedia 链接）
   s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, text, url) =>
     hold(`<a href="${safeUrl(url)}" target="_blank" rel="noreferrer noopener">${text}</a>`));
+
+  // 引用式链接：`[text][ref]` 或 `[ref][]`
+  s = s.replace(/\[([^\]]+)\]\[([^\]]*)\]/g, (m, text, ref) => {
+    const key = ref.trim() || text.trim();
+    const target = _linkRefs.get(key.toLowerCase());
+    if (target) {
+      return hold(`<a href="${safeUrl(target)}" target="_blank" rel="noreferrer noopener">${text}</a>`);
+    }
+    return m; // 找不到引用时原样保留
+  });
 
   // 尖括号自动链接：<https://…> 与 <a@b.com>
   s = s.replace(/&lt;(https?:\/\/[^&\s]+)&gt;/g, (m, url) =>
@@ -82,14 +103,23 @@ function inline(md) {
   return s.replace(/\u0001(\d+)\u0001/g, (m, n) => stash[+n]);
 }
 
+// _linkRefs 是本次渲染的引用式链接声明表，在 parseReferenceLinks 中填充
+let _linkRefs = new Map();
+
+// 行内渲染入口：先处理代码（占位），再套其余语法，最后还原代码
+function inline(md, state) {
+  const { stash, body } = inlineCodeStash(escapeHtml(md));
+  return applyInlineSyntax(body, stash);
+}
+
 // 段落/引用内换行：GFM 软换行按普通换行处理，行尾两空格或反斜杠才是硬换行
-function renderInlineBlock(text) {
+function renderInlineBlock(text, state) {
   const lines = text.split("\n");
   return lines
     .map((l, idx) => {
       const hard = / {2,}$/.test(l) || /\\$/.test(l);
       const clean = l.replace(/ {2,}$/, "").replace(/\\$/, "");
-      return inline(clean) + (hard && idx < lines.length - 1 ? "<br>" : "");
+      return inline(clean, state) + (hard && idx < lines.length - 1 ? "<br>" : "");
     })
     .join("\n");
 }
@@ -105,8 +135,23 @@ function isBlockStart(line) {
     /^\s*(`{3,}|~{3,})/.test(line) ||
     /^\s{0,3}>/.test(line) ||
     /^\s*([-+*]|\d+[.)])\s+/.test(line) ||
-    /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)
+    /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line) ||
+    /^\s{4,}\S/.test(line) // 4 空格缩进代码块
   );
+}
+
+// 引用式链接声明：`[id]: url "title"`（title 可选）
+const _linkRefRe = /^\s{0,3}\[([^\]]+)\]:\s*(\S+)(?:\s+"([^"]*)|\s+'([^']*)|\s+\(([^)]*)\))?\s*$/;
+
+function isLinkRefDecl(line) { return _linkRefRe.test(line); }
+
+function parseLinkRefDecls(lines, state) {
+  const refs = new Map();
+  for (const l of lines) {
+    const m = l.match(_linkRefRe);
+    if (m) refs.set(m[1].toLowerCase(), m[2]);
+  }
+  _linkRefs = refs;
 }
 
 // 拆表格行：支持 \| 转义，忽略首尾竖线
@@ -140,6 +185,15 @@ function isTableStart(lines, i) {
   return splitRow(lines[i]).length === delims.length;
 }
 
+// setext 标题检测：行不为空，下一行全是 = 或 -，且至少 3 个
+function isSetextStart(lines, i) {
+  if (i + 1 >= lines.length) return false;
+  const title = lines[i];
+  const under = lines[i + 1].trim();
+  if (!title.trim()) return false;
+  return /^={3,}\s*$/.test(under) || /^-{3,}\s*$/.test(under);
+}
+
 function renderTable(lines, i, state) {
   const header = splitRow(lines[i]);
   const delims = splitRow(lines[i + 1]);
@@ -156,7 +210,7 @@ function renderTable(lines, i, state) {
   }
   const cell = (tag, text, idx) => {
     const style = aligns[idx] ? ` style="text-align:${aligns[idx]}"` : "";
-    return `<${tag}${style}>${inline(text)}</${tag}>`;
+    return `<${tag}${style}>${inline(text, state)}</${tag}>`;
   };
   const head = `<thead><tr>${header.map((c, idx) => cell("th", c, idx)).join("")}</tr></thead>`;
   const body = rows.length
@@ -224,9 +278,9 @@ function parseList(lines, start, state) {
       const checked = task[1].toLowerCase() === "x";
       body =
         `<input type="checkbox" disabled${checked ? " checked" : ""}> ` +
-        renderInlineBlock([task[2].trim(), ...textLines].join("\n"));
+        renderInlineBlock([task[2].trim(), ...textLines].join("\n"), state);
     } else {
-      body = renderInlineBlock([text.trim(), ...textLines].join("\n"));
+      body = renderInlineBlock([text.trim(), ...textLines].join("\n"), state);
     }
     if (nested.length) body += renderBlocks(nested, state);
     items.push(`<li${task ? ' class="md-task"' : ""}>${body}</li>`);
@@ -243,6 +297,23 @@ function renderBlocks(lines, state) {
 
   while (i < lines.length) {
     const line = lines[i];
+
+    // 4 空格缩进代码块（要排除列表项缩进的情况：列表项本身以 -/*1. 等开头）
+    if (/^\s{4,}\S/.test(line)) {
+      const buf = [];
+      while (i < lines.length && (/^\s{4,}/.test(lines[i]) || lines[i].trim() === "")) {
+        buf.push(lines[i].replace(/^\s{0,4}/, ""));
+        i++;
+        // 如果遇到空行后下一行又不是缩进，则停止（空行是代码块的分隔）
+        if (buf[buf.length - 1].trim() === "" && i < lines.length && !/^\s{4,}/.test(lines[i])) {
+          // 空行不算在代码块内（除非整段都是空行）
+          while (buf.length && buf[buf.length - 1].trim() === "") buf.pop();
+          break;
+        }
+      }
+      if (buf.length) out.push(`<pre><code>${escapeHtml(buf.join("\n"))}</code></pre>`);
+      continue;
+    }
 
     // 围栏代码块（``` 或 ~~~，可带语言标识）
     const fence = line.match(/^\s*(`{3,}|~{3,})\s*([^`]*)$/);
@@ -261,8 +332,7 @@ function renderBlocks(lines, state) {
         i++;
       }
       const src = buf.join("\n");
-      // mermaid 围栏输出占位容器，由 preview.js 异步替换为图表；
-      // 源码仍以转义文本保存，Mermaid 加载/渲染失败时可原样展示。
+      // mermaid 围栏输出占位容器，由 preview.js 异步替换为图表
       if (info.toLowerCase() === "mermaid") {
         out.push(
           `<div class="md-mermaid" data-mermaid-state="pending">` +
@@ -278,12 +348,22 @@ function renderBlocks(lines, state) {
       continue;
     }
 
-    // 标题（生成锚点 id）
+    // setext 标题
+    if (isSetextStart(lines, i)) {
+      const under = lines[i + 1].trim();
+      const level = /^={3,}/.test(under) ? 1 : 2;
+      const slug = makeSlug(lines[i].trim(), state);
+      out.push(`<h${level} id="${slug}">${inline(lines[i].trim(), state)}</h${level}>`);
+      i += 2;
+      continue;
+    }
+
+    // ATX 标题（生成锚点 id）
     const h = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
     if (h) {
       const level = h[1].length;
       const slug = makeSlug(h[2], state);
-      out.push(`<h${level} id="${slug}">${inline(h[2])}</h${level}>`);
+      out.push(`<h${level} id="${slug}">${inline(h[2], state)}</h${level}>`);
       i++;
       continue;
     }
@@ -294,6 +374,9 @@ function renderBlocks(lines, state) {
       i++;
       continue;
     }
+
+    // 引用式链接声明：忽略（已在渲染前收集过）
+    if (isLinkRefDecl(line)) { i++; continue; }
 
     // 表格
     if (isTableStart(lines, i)) {
@@ -335,12 +418,14 @@ function renderBlocks(lines, state) {
       i < lines.length &&
       lines[i].trim() !== "" &&
       !isBlockStart(lines[i]) &&
+      !isSetextStart(lines, i) &&
+      !isLinkRefDecl(lines[i]) &&
       !isTableStart(lines, i)
     ) {
       buf.push(lines[i]);
       i++;
     }
-    out.push(`<p>${renderInlineBlock(buf.join("\n"))}</p>`);
+    out.push(`<p>${renderInlineBlock(buf.join("\n"), state)}</p>`);
   }
 
   return out.join("\n");
@@ -349,5 +434,9 @@ function renderBlocks(lines, state) {
 // 渲染整个文档
 export function renderMarkdown(src) {
   const lines = src.replace(/\r\n?/g, "\n").split("\n");
-  return renderBlocks(lines, { slugs: new Map() });
+  const state = { slugs: new Map() };
+  parseLinkRefDecls(lines, state);
+  const html = renderBlocks(lines, state);
+  _linkRefs = new Map(); // 避免残留
+  return html;
 }

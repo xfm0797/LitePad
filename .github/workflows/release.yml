@@ -56,10 +56,17 @@ jobs:
           CGO_ENABLED: '0'
         run: go build -tags desktop,production -trimpath -ldflags "-s -w -H windowsgui" -o LitePad.exe .
 
+      - name: Build Inno Setup installer
+        uses: ilammy/setup-iss@v1
+        with:
+          script: release/LitePad.iss
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: LitePad ${{ github.ref_name }}
           generate_notes: true
-          files: LitePad.exe
+          files: |
+            LitePad.exe
+            release/LitePad-Setup-*.exe

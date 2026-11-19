@@ -3,6 +3,7 @@
 // 变更时只 dispatch 重配置 effect，避免重建 state —— 撤销历史与光标得以保留，
 // 同时可同步到所有后台标签。
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightWhitespace } from "@codemirror/view";
+import { rectangularSelection, crosshairCursor } from "@codemirror/rectangular-selection";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { search } from "@codemirror/search";
@@ -112,6 +113,8 @@ export function buildExtensions(cfg, language, onUpdate) {
     basicSetup,
     search(), // SearchQuery 状态：查找面板高亮与 setSearchQuery 依赖它
     bookmarkGutter(), // 行书签 gutter + StateField
+    rectangularSelection({ eventFilter: (e) => e.altKey && !e.shiftKey }), // Alt+拖拽 矩形选区
+    crosshairCursor({ key: "Alt" }),
     EditorView.clickAddsSelectionRange.of((e) => e.altKey), // Alt+点击 添加多光标
     keymap.of([indentWithTab]),
     wsComp.of(cfg.showWhitespace ? highlightWhitespace() : []),
