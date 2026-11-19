@@ -69,8 +69,10 @@ func (l *Logger) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file != nil {
-		l.write(levelInfo, "log.go", "==== LitePad session end ====")
+		ts := time.Now().Format("2006-01-02 15:04:05")
+		_, _ = fmt.Fprintf(l.file, "%s [INFO] log.go ==== LitePad session end ====\n", ts)
 		_ = l.file.Close()
+		l.file = nil
 		l.closed = true
 	}
 }
@@ -99,6 +101,9 @@ func (l *Logger) rotateIfNeeded() {
 }
 
 func (l *Logger) write(level logLevel, caller string, format string, args ...any) {
+	if l == nil {
+		return
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed || l.file == nil {
