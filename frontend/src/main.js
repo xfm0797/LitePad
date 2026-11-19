@@ -21,7 +21,7 @@ import {
   trimTrailingSpaces, tabToSpaces, spacesToTab, insertDateTime,
   addCursorVertical, collapseCursors,
 } from "./commands.js";
-import { toggleBookmark, gotoBookmark, clearAllBookmarks, getBookmarkLineNumbers, restoreBookmarks } from "./bookmarks.js";
+import { toggleBookmark, gotoBookmark, clearAllBookmarks, getBookmarkLineNumbers, getBookmarkLineNumbersFromState, restoreBookmarks } from "./bookmarks.js";
 import { editorMenuItems, normalizeContextMenu } from "./ctxmenu.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -209,6 +209,18 @@ async function closeTab(id, { ensureOne = true } = {}) {
   }
   const cur = activeTab();
   if (cur && cur.id === id && ed) cur.state = ed.view.state;
+  // 关闭前从该 tab 的 state 提取书签并同步写盘（saveConfigSoon 的 300ms 去抖可能还没触发）。
+  // 用 t.state 而不是 ed.view.state：关闭非激活 tab 时 ed.view 指向别的标签。
+  if (t.path && t.state) {
+    if (!cfg.bookmarks) cfg.bookmarks = {};
+    const lines = getBookmarkLineNumbersFromState(t.state);
+    if (lines.length === 0) {
+      delete cfg.bookmarks[t.path];
+    } else {
+      cfg.bookmarks[t.path] = lines;
+    }
+    flushSaveConfig();
+  }
   // 非空标签压入关闭栈，供 Ctrl+Shift+T 恢复（最多保留最近 10 条）
   if (t.path) {
     closedStack.push({ path: t.path, name: t.name });
@@ -959,6 +971,14 @@ function saveConfigSoon() {
     const A = App();
     if (A) A.SaveConfig(cfg).catch(() => {});
   }, 300);
+}
+
+// flushSaveConfig 立即把当前 cfg 写盘（忽略 300ms 去抖），用于 closeTab/beforeClose 等即将退出的场景。
+function flushSaveConfig() {
+  clearTimeout(cfgSaveTimer);
+  cfgSaveTimer = null;
+  const A = App();
+  if (A) A.SaveConfig(cfg).catch(() => {});
 }
 
 function zoom(delta) {

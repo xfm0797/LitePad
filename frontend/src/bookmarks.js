@@ -113,9 +113,15 @@ export function bookmarkCount(view) {
 // getBookmarkLineNumbers 把当前书签集合转成行号数组（行号从 1 起，便于跨会话持久化）。
 // 位置在文档编辑后会变，但行号仍能恢复到大致正确的位置。
 export function getBookmarkLineNumbers(view) {
-  const set = view.state.field(bookmarkField, false);
+  return getBookmarkLineNumbersFromState(view.state);
+}
+
+// getBookmarkLineNumbersFromState 从任意 EditorState 提取书签行号。
+// 用于关闭非激活 tab 时从其 state 恢复书签（此时 ed.view 指向别的 tab）。
+export function getBookmarkLineNumbersFromState(state) {
+  const set = state.field(bookmarkField, false);
   if (!set || set.size === 0) return [];
-  const doc = view.state.doc;
+  const doc = state.doc;
   const lines = [];
   for (const pos of set) {
     const line = doc.lineAt(pos);
