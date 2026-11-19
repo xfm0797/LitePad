@@ -39,6 +39,7 @@ let palette = null;  // 命令面板
 let status = null;   // 状态栏
 let preview = null;  // Markdown 预览
 let fullscreen = false;
+let lastUnsaved = false; // 上次同步给 Go 侧的脏状态，避免每次按键都发 IPC
 
 const ENCODINGS = ["UTF-8", "UTF-8 BOM", "GBK", "ANSI (GB18030)", "UTF-16 LE", "UTF-16 BE"];
 const BASE_FONT_SIZE = 14;
@@ -76,8 +77,9 @@ function onDocUpdate(u) {
   }
   if (u.selectionSet || u.docChanged) {
     updateStatus();
-    renderPreview();
   }
+  // 预览只随文档内容变化：仅移动光标/选择时重渲染整篇 Markdown 没有意义。
+  if (u.docChanged) renderPreview();
 }
 
 // ---------- 标签 ----------
@@ -858,7 +860,8 @@ function applyConfigToView() {
     t.state = applyConfigToState(t.state, cfg);
   }
   updateStatus();
-  renderPreview();
+  // 主题/字体等变化会影响 Mermaid 配色，强制重渲染预览。
+  renderPreview(true);
 }
 
 // 配置写盘去抖：连续按 Ctrl+= 缩放时不必每个按键都写一次磁盘。
@@ -914,7 +917,7 @@ function togglePreview() {
 }
 
 function updateStatus() { if (status) status.update(); }
-function renderPreview() { if (preview) preview.render(); }
+function renderPreview(force = false) { if (preview) preview.render(force); }
 
 // 恢复默认右键菜单（全部分组 + 显示快捷键）
 async function resetContextMenu() {
@@ -983,8 +986,11 @@ function showQuickOpen() {
 
 // ---------- 状态同步 ----------
 function syncUnsaved() {
+  const unsaved = tabs.some(isDirty);
+  if (unsaved === lastUnsaved) return;
+  lastUnsaved = unsaved;
   const A = App();
-  if (A) A.SetUnsaved(tabs.some(isDirty));
+  if (A) A.SetUnsaved(unsaved);
 }
 
 // 会话/监视同步去抖 400ms：编辑时每敲一个键都调用，直接 IPC + 写盘代价过高。
@@ -1088,17 +1094,26 @@ onEvent("files:dropped", (paths) => {
 });
 
 onEvent("app:confirm-exit", async () => {
-  const ok = await showModal("有未保存的更改，确定要退出吗？", [
-    { label: "退出", primary: true, collect: () => true },
+  const ok = await showModal("有未保存的更改，是否保存？", [
+    {
+      label: "全部保存并退出",
+      primary: true,
+      // 保存过程中用户可能取消“另存为”对话框，此时仍有脏标签，应中止退出。
+      collect: async () => {
+        await saveAllTabs();
+        return !tabs.some(isDirty);
+      },
+    },
+    { label: "不保存退出", collect: () => true },
     { label: "取消", collect: () => false },
   ]);
-  if (ok) {
-    const A = App();
-    if (!A) return;
-    // 先清除未保存标记，否则退出流程会再次触发 OnBeforeClose，形成确认循环。
-    A.SetUnsaved(false);
-    A.Quit();
-  }
+  if (!ok) return;
+  const A = App();
+  if (!A) return;
+  // 先清除未保存标记，否则退出流程会再次触发 OnBeforeClose，形成确认循环。
+  lastUnsaved = false;
+  A.SetUnsaved(false);
+  A.Quit();
 });
 
 // 关闭窗口前尽力保存一次会话（异步 IPC 可能来不及完成，故平时已有去抖落盘）。

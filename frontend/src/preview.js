@@ -13,6 +13,8 @@ let mermaidLoading = null;
 let diagramSeq = 0;
 // 串行执行渲染任务：Mermaid 的 render 依赖全局配置，不能并发调用。
 let renderChain = Promise.resolve();
+// 上次渲染的文档快照（Text 不可变，可用引用判断内容是否变化）。
+let lastDoc = null;
 
 function loadMermaid() {
   if (mermaidLib) return Promise.resolve(mermaidLib);
@@ -137,6 +139,25 @@ export function createPreview({ viewRef, tabRef }) {
   let on = false;
   let timer = null;
   let gen = 0;
+  let pendingForce = false;
+
+  // 预览内链接：锚点在窗格内滚动，http/https 交给系统浏览器，其余一律拦截。
+  // 否则 WebView2 可能把整个应用导航到目标页面，或打开空白窗口。
+  pane.addEventListener("click", (e) => {
+    const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
+    if (!a || !pane.contains(a)) return;
+    e.preventDefault();
+    const href = a.getAttribute("href") || "";
+    if (href.startsWith("#")) {
+      const target = href.length > 1 ? document.getElementById(href.slice(1)) : null;
+      if (target && pane.contains(target)) target.scrollIntoView({ block: "start" });
+      return;
+    }
+    if (/^https?:\/\//i.test(href)) {
+      const A = window.go && window.go.main && window.go.main.App;
+      if (A && typeof A.OpenExternal === "function") A.OpenExternal(href).catch(() => {});
+    }
+  });
 
   function toggle() {
     on = !on;
@@ -144,24 +165,31 @@ export function createPreview({ viewRef, tabRef }) {
     render();
   }
 
-  function render() {
+  function render(force = false) {
+    // 强制刷新标记要跨过去抖窗口累积，避免紧跟着的普通渲染把主题刷新吞掉。
+    pendingForce = pendingForce || force;
     clearTimeout(timer);
     if (!on) return;
     const myGen = ++gen;
     timer = setTimeout(() => {
+      const forced = pendingForce;
+      pendingForce = false;
       renderChain = renderChain
-        .then(() => performRender(myGen))
+        .then(() => performRender(myGen, forced))
         .catch(() => {});
     }, 250);
   }
 
-  async function performRender(myGen) {
+  async function performRender(myGen, force) {
     // 期间又触发了新一轮渲染或已关闭预览，直接丢弃本次结果
     if (!on || myGen !== gen) return;
     const tab = tabRef();
     if (!tab) return;
     const doc = viewRef().state.doc;
+    // 文档未变化且不是强制刷新（如主题切换）：无需重复解析与重建 DOM。
+    if (!force && doc === lastDoc) return;
     if (doc.length > MAX_PREVIEW_BYTES) {
+      lastDoc = doc;
       pane.textContent = "文档超过 2MB，已暂停实时预览以保证编辑流畅。";
       return;
     }
@@ -177,6 +205,7 @@ export function createPreview({ viewRef, tabRef }) {
     const prevMax = pane.scrollHeight - pane.clientHeight;
     const ratio = prevMax > 0 ? pane.scrollTop / prevMax : 0;
     pane.replaceChildren(...Array.from(staging.childNodes));
+    lastDoc = doc;
     if (ratio > 0) {
       const max = pane.scrollHeight - pane.clientHeight;
       pane.scrollTop = Math.min(max, Math.round(ratio * max));

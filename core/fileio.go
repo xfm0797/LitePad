@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -26,7 +27,18 @@ const MaxOpenBytes = 128 << 20
 // ReadTextFile 读取磁盘文件，自动识别编码与换行符，
 // 统一返回 UTF-8 内容、识别出的编码与换行符类型。
 func ReadTextFile(path string) (content string, encoding string, eol string, err error) {
-	raw, err := os.ReadFile(path)
+	// 先用 Stat 判断大小：os.ReadFile 会一次性分配并读入整个文件，
+	// 读完再比较上限时超大文件早已占满内存，限制形同虚设。
+	if st, statErr := os.Stat(path); statErr == nil && st.Size() > MaxOpenBytes {
+		return "", "", "", ErrFileTooLarge
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer f.Close()
+	// 多读 1 字节：防止文件在 Stat 与读取之间被追加，导致绕过上限。
+	raw, err := io.ReadAll(io.LimitReader(f, MaxOpenBytes+1))
 	if err != nil {
 		return "", "", "", err
 	}

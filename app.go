@@ -284,11 +284,13 @@ func (a *App) GetConfig() core.Config {
 // 丢掉这些数据，因此这两项始终以服务端为准。
 func (a *App) SaveConfig(cfg core.Config) error {
 	cfg.Normalize()
+	// 内存更新与磁盘写入放在同一把锁内：若锁外写盘，两次并发保存的
+	// 实际落盘顺序可能与逻辑顺序相反，旧快照会覆盖新设置。
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	cfg.RecentFiles = a.cfg.RecentFiles
 	cfg.Integrations = a.cfg.Integrations
 	a.cfg = cfg
-	a.cfgMu.Unlock()
 	if a.store == nil {
 		return nil
 	}
@@ -306,9 +308,9 @@ func (a *App) SetWindowTitle(title string) {
 // AddRecent 将路径加入最近文件列表并持久化，返回更新后的配置。
 func (a *App) AddRecent(path string) (core.Config, error) {
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	a.cfg.RecentFiles = core.PushRecent(a.cfg.RecentFiles, path)
 	updated := a.cfg
-	a.cfgMu.Unlock()
 	if a.store != nil {
 		if err := a.store.SaveConfig(updated); err != nil {
 			return updated, err
@@ -394,11 +396,10 @@ func (a *App) ApplyAssoc(formats []string, explorerMenu bool, setDefault bool) e
 		return err
 	}
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	a.cfg.Integrations = core.IntegrationPrefs{Formats: clean, ExplorerMenu: explorerMenu, SetDefault: setDefault}
-	updated := a.cfg
-	a.cfgMu.Unlock()
 	if a.store != nil {
-		_ = a.store.SaveConfig(updated)
+		_ = a.store.SaveConfig(a.cfg)
 	}
 	return nil
 }
@@ -409,11 +410,10 @@ func (a *App) ClearAssoc() error {
 		return err
 	}
 	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	a.cfg.Integrations = core.IntegrationPrefs{Formats: []string{}, ExplorerMenu: false, SetDefault: false}
-	updated := a.cfg
-	a.cfgMu.Unlock()
 	if a.store != nil {
-		_ = a.store.SaveConfig(updated)
+		_ = a.store.SaveConfig(a.cfg)
 	}
 	return nil
 }
